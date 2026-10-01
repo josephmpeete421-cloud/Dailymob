@@ -104,7 +104,7 @@ $("post").onclick = async () => {
 
 async function loadFeed() {
   const { data, error } = await db.from("posts")
-    .select("id,content,created_at,profiles(username),likes(user_id),comments(id,content,profiles(username))")
+    .select("id,content,created_at,profiles!posts_user_id_fkey(username),likes(user_id),comments(id,content,profiles!comments_user_id_fkey(username))")
     .order("created_at", { ascending: false }).limit(50);
   if (error) { $("feed").innerHTML = '<div class="card msg">' + esc(error.message) + '</div>'; return; }
   if (!data.length) { $("feed").innerHTML = '<div class="card">No posts yet. Write the first one.</div>'; return; }
