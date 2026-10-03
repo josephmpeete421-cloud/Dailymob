@@ -198,7 +198,7 @@ $("signup").onclick = async () => {
   if (username.length < 3) { $("amsg").textContent = "Choose a username with 3+ characters."; return; }
   const { data, error } = await db.auth.signUp({
     email: $("email").value.trim(), password: $("pass").value,
-    options: { data: { username } }
+    options: { data: { username }, emailRedirectTo: location.href }
   });
   if (error) { $("amsg").textContent = error.message; return; }
   if (data.session) start(data.user);
