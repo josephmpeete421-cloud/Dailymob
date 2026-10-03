@@ -51,6 +51,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
   <input id="email" type="email" placeholder="Email" autocomplete="email">
   <input id="pass" type="password" placeholder="Password (6+ characters)" autocomplete="current-password">
   <input id="uname" placeholder="Username (only for sign up)">
+  <input id="dob" type="date" placeholder="Date of birth (only for sign up)">
   <div class="msg" id="amsg"></div>
   <button id="login">Log in</button>
   <button id="signup" class="ghost">Create account</button>
@@ -78,6 +79,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
       <textarea id="bioInput" rows="2" placeholder="Write a short bio"></textarea>
       <button id="saveProfile">Save</button>
       <span class="msg" id="profmsg"></span>
+      <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px">
+        <button id="deleteAccount" class="ghost" style="color:var(--acc)">Delete my account</button>
+      </div>
     </div>
   </div>
 
@@ -113,7 +117,8 @@ async function ensureProfile(user) {
   const { data } = await db.from("profiles").select("*").eq("id", user.id).maybeSingle();
   if (data) return data;
   const name = (user.user_metadata && user.user_metadata.username) || user.email.split("@")[0];
-  const { data: created } = await db.from("profiles").insert({ id: user.id, username: name }).select().single();
+  const dob = (user.user_metadata && user.user_metadata.dob) || null;
+  const { data: created } = await db.from("profiles").insert({ id: user.id, username: name, date_of_birth: dob }).select().single();
   return created;
 }
 
@@ -172,6 +177,18 @@ async function start(user) {
 
 $("editProfile").onclick = () => $("editBox").classList.toggle("hide");
 
+$("deleteAccount").onclick = async () => {
+  if (!confirm("This permanently deletes your profile, posts, likes, comments and follows. This cannot be undone. Continue?")) return;
+  await db.from("comments").delete().eq("user_id", me.id);
+  await db.from("likes").delete().eq("user_id", me.id);
+  await db.from("follows").delete().eq("follower_id", me.id);
+  await db.from("follows").delete().eq("following_id", me.id);
+  await db.from("posts").delete().eq("user_id", me.id);
+  await db.from("profiles").delete().eq("id", me.id);
+  await db.auth.signOut();
+  location.reload();
+};
+
 $("saveProfile").onclick = async () => {
   $("profmsg").textContent = "Saving...";
   let avatar_url = myProfile.avatar_url;
@@ -196,9 +213,13 @@ $("saveProfile").onclick = async () => {
 $("signup").onclick = async () => {
   const username = $("uname").value.trim();
   if (username.length < 3) { $("amsg").textContent = "Choose a username with 3+ characters."; return; }
+  const dob = $("dob").value;
+  if (!dob) { $("amsg").textContent = "Enter your date of birth."; return; }
+  const age = Math.floor((Date.now() - new Date(dob).getTime()) / 31557600000);
+  if (age < 16) { $("amsg").textContent = "You must be at least 16 to join Daily Mob."; return; }
   const { data, error } = await db.auth.signUp({
     email: $("email").value.trim(), password: $("pass").value,
-    options: { data: { username }, emailRedirectTo: location.href }
+    options: { data: { username, dob }, emailRedirectTo: location.href }
   });
   if (error) { $("amsg").textContent = error.message; return; }
   if (data.session) start(data.user);
