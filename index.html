@@ -22,7 +22,8 @@ button.icon{background:transparent;color:var(--ink);padding:6px 10px;font-size:1
 button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .who{font-weight:700}.time{color:var(--soft);font-size:13px;margin-left:6px}
 .acts{display:flex;gap:6px;margin-top:8px}
-.liked{color:var(--acc)}
+.liked{color:var(--acc);font-weight:700}
+.reactions{display:flex;gap:4px;flex-wrap:wrap}
 .cm{border-top:1px solid var(--line);margin-top:8px;padding-top:6px;font-size:15px}
 .msg{color:var(--acc);min-height:20px;font-size:14px}
 .hide{display:none}
@@ -242,15 +243,23 @@ $("post").onclick = async () => {
   if (!error) { $("txt").value = ""; loadFeed(); }
 };
 
+let lastFeedData = [];
+
 async function loadFeed() {
   const { data, error } = await db.from("posts")
-    .select("id,content,created_at,profiles!posts_user_id_fkey(id,username,avatar_url),likes(user_id),comments(id,content,profiles!comments_user_id_fkey(username))")
+    .select("id,content,created_at,profiles!posts_user_id_fkey(id,username,avatar_url),likes(user_id,reaction),comments(id,content,profiles!comments_user_id_fkey(username))")
     .order("created_at", { ascending: false }).limit(50);
   if (error) { $("feed").innerHTML = '<div class="card msg">' + esc(error.message) + '</div>'; return; }
+  lastFeedData = data;
   if (!data.length) { $("feed").innerHTML = '<div class="card">No posts yet. Write the first one.</div>'; return; }
+  const EMOJIS = ["\uD83D\uDC4D", "\u2764\uFE0F", "\uD83D\uDE02", "\uD83D\uDE2E"];
   $("feed").innerHTML = data.map(p => {
-    const liked = p.likes.some(l => l.user_id === me.id);
     const av = (p.profiles && p.profiles.avatar_url) || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(p.profiles && p.profiles.username || "U");
+    const reactRow = EMOJIS.map(e => {
+      const count = p.likes.filter(l => (l.reaction || "\uD83D\uDC4D") === e).length;
+      const mine = p.likes.some(l => l.user_id === me.id && (l.reaction || "\uD83D\uDC4D") === e);
+      return '<button class="ghost ' + (mine ? "liked" : "") + '" onclick="react(' + p.id + ',\'' + e + '\')">' + e + ' ' + count + '</button>';
+    }).join("");
     return '<div class="card">' +
       '<div class="profile" style="margin-bottom:8px">' +
       '<img class="avatar" style="width:34px;height:34px" src="' + esc(av) + '">' +
@@ -259,8 +268,7 @@ async function loadFeed() {
       (p.profiles && p.profiles.id !== me.id ? '<button class="ghost" style="margin-left:auto" onclick="toggleFollow(\'' + p.profiles.id + '\',' + myFollowing.has(p.profiles.id) + ')">' + (myFollowing.has(p.profiles.id) ? "Following" : "Follow") + '</button>' : '') +
       '</div>' +
       '<div>' + esc(p.content) + '</div>' +
-      '<div class="acts"><button class="ghost ' + (liked ? "liked" : "") + '" onclick="toggleLike(' + p.id + ',' + liked + ')">' +
-      (liked ? "Liked " : "Like ") + p.likes.length + '</button>' +
+      '<div class="acts reactions">' + reactRow +
       '<button class="ghost" onclick="sharePost(' + p.id + ')">Share</button></div>' +
       p.comments.map(c => '<div class="cm"><span class="who">' + esc(c.profiles && c.profiles.username) + '</span> ' + esc(c.content) + '</div>').join("") +
       '<input id="c' + p.id + '" placeholder="Write a comment"><button class="ghost" onclick="addComment(' + p.id + ')">Comment</button>' +
@@ -268,9 +276,17 @@ async function loadFeed() {
   }).join("");
 }
 
-async function toggleLike(id, liked) {
-  if (liked) await db.from("likes").delete().eq("post_id", id).eq("user_id", me.id);
-  else await db.from("likes").insert({ post_id: id, user_id: me.id });
+async function react(id, type) {
+  const post = lastFeedData.find(p => p.id === id);
+  const mine = post && post.likes.find(l => l.user_id === me.id);
+  const mineType = mine ? (mine.reaction || "\uD83D\uDC4D") : null;
+  if (mineType === type) {
+    await db.from("likes").delete().eq("post_id", id).eq("user_id", me.id);
+  } else if (mine) {
+    await db.from("likes").update({ reaction: type }).eq("post_id", id).eq("user_id", me.id);
+  } else {
+    await db.from("likes").insert({ post_id: id, user_id: me.id, reaction: type });
+  }
   loadFeed();
 }
 
