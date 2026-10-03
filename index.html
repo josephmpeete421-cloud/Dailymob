@@ -64,6 +64,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
     </div>
     <div id="editBox" class="hide">
       <input id="avatarFile" type="file" accept="image/*">
+      <input id="unameInput" placeholder="Username">
       <textarea id="bioInput" rows="2" placeholder="Write a short bio"></textarea>
       <button id="saveProfile">Save</button>
       <span class="msg" id="profmsg"></span>
@@ -111,6 +112,7 @@ function renderProfile() {
   $("pbio").textContent = myProfile.bio || "No bio yet.";
   $("avatarImg").src = myProfile.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(myProfile.username);
   $("bioInput").value = myProfile.bio || "";
+  $("unameInput").value = myProfile.username || "";
 }
 
 async function start(user) {
@@ -136,7 +138,9 @@ $("saveProfile").onclick = async () => {
     avatar_url = db.storage.from("avatars").getPublicUrl(path).data.publicUrl;
   }
   const bio = $("bioInput").value.trim();
-  const { data, error } = await db.from("profiles").update({ bio, avatar_url }).eq("id", me.id).select().single();
+  const username = $("unameInput").value.trim();
+  if (username.length < 3) { $("profmsg").textContent = "Username needs 3+ characters."; return; }
+  const { data, error } = await db.from("profiles").update({ bio, username, avatar_url }).eq("id", me.id).select().single();
   if (error) { $("profmsg").textContent = error.message; return; }
   myProfile = data;
   renderProfile();
