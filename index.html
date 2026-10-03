@@ -31,6 +31,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .pinfo{flex:1;min-width:0}
 .pname{font-weight:700;font-size:17px}
 .pbio{color:var(--soft);font-size:14px;margin-top:2px}
+.stats{display:flex;gap:16px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.stat{text-align:center}
+.stat b{display:block;font-size:17px}
+.stat span{color:var(--soft);font-size:12px}
 </style>
 </head>
 <body>
@@ -61,6 +65,12 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
         <div class="pbio" id="pbio"></div>
       </div>
       <button class="ghost" id="editProfile">Edit</button>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="statPosts">0</b><span>Posts</span></div>
+      <div class="stat"><b id="statFollowers">0</b><span>Followers</span></div>
+      <div class="stat"><b id="statFollowing">0</b><span>Following</span></div>
+      <div class="stat"><b id="statLikes">0</b><span>Likes</span></div>
     </div>
     <div id="editBox" class="hide">
       <input id="avatarFile" type="file" accept="image/*">
@@ -115,6 +125,39 @@ function renderProfile() {
   $("unameInput").value = myProfile.username || "";
 }
 
+let myFollowing = new Set();
+
+async function loadFollowing() {
+  const { data } = await db.from("follows").select("following_id").eq("follower_id", me.id);
+  myFollowing = new Set((data || []).map(r => r.following_id));
+}
+
+async function loadStats() {
+  const [{ count: postsCount }, { count: followersCount }, { count: followingCount }, { data: myPosts }] = await Promise.all([
+    db.from("posts").select("id", { count: "exact", head: true }).eq("user_id", me.id),
+    db.from("follows").select("follower_id", { count: "exact", head: true }).eq("following_id", me.id),
+    db.from("follows").select("following_id", { count: "exact", head: true }).eq("follower_id", me.id),
+    db.from("posts").select("id").eq("user_id", me.id)
+  ]);
+  let likesCount = 0;
+  if (myPosts && myPosts.length) {
+    const ids = myPosts.map(p => p.id);
+    const { count } = await db.from("likes").select("post_id", { count: "exact", head: true }).in("post_id", ids);
+    likesCount = count || 0;
+  }
+  $("statPosts").textContent = postsCount || 0;
+  $("statFollowers").textContent = followersCount || 0;
+  $("statFollowing").textContent = followingCount || 0;
+  $("statLikes").textContent = likesCount;
+}
+
+async function toggleFollow(id, following) {
+  if (following) { await db.from("follows").delete().eq("follower_id", me.id).eq("following_id", id); myFollowing.delete(id); }
+  else { await db.from("follows").insert({ follower_id: me.id, following_id: id }); myFollowing.add(id); }
+  loadFeed();
+  loadStats();
+}
+
 async function start(user) {
   me = user;
   myProfile = await ensureProfile(user);
@@ -122,6 +165,8 @@ async function start(user) {
   $("auth").classList.add("hide");
   $("app").classList.remove("hide");
   $("out").classList.remove("hide");
+  await loadFollowing();
+  loadStats();
   loadFeed();
 }
 
@@ -178,7 +223,7 @@ $("post").onclick = async () => {
 
 async function loadFeed() {
   const { data, error } = await db.from("posts")
-    .select("id,content,created_at,profiles!posts_user_id_fkey(username,avatar_url),likes(user_id),comments(id,content,profiles!comments_user_id_fkey(username))")
+    .select("id,content,created_at,profiles!posts_user_id_fkey(id,username,avatar_url),likes(user_id),comments(id,content,profiles!comments_user_id_fkey(username))")
     .order("created_at", { ascending: false }).limit(50);
   if (error) { $("feed").innerHTML = '<div class="card msg">' + esc(error.message) + '</div>'; return; }
   if (!data.length) { $("feed").innerHTML = '<div class="card">No posts yet. Write the first one.</div>'; return; }
@@ -190,6 +235,7 @@ async function loadFeed() {
       '<img class="avatar" style="width:34px;height:34px" src="' + esc(av) + '">' +
       '<span class="who">' + esc(p.profiles && p.profiles.username) + '</span>' +
       '<span class="time">' + new Date(p.created_at).toLocaleString() + '</span>' +
+      (p.profiles && p.profiles.id !== me.id ? '<button class="ghost" style="margin-left:auto" onclick="toggleFollow(\'' + p.profiles.id + '\',' + myFollowing.has(p.profiles.id) + ')">' + (myFollowing.has(p.profiles.id) ? "Following" : "Follow") + '</button>' : '') +
       '</div>' +
       '<div>' + esc(p.content) + '</div>' +
       '<div class="acts"><button class="ghost ' + (liked ? "liked" : "") + '" onclick="toggleLike(' + p.id + ',' + liked + ')">' +
