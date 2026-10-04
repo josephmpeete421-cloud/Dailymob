@@ -26,7 +26,13 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .reactions{display:flex;gap:4px;flex-wrap:wrap;align-items:center;position:relative}
 .react-picker{display:flex;gap:2px;position:absolute;bottom:38px;left:0;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:4px;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:5}
 .react-picker button{font-size:20px;padding:4px 8px}
-.cm{border-top:1px solid var(--line);margin-top:8px;padding-top:6px;font-size:15px}
+.cm{display:flex;gap:8px;margin-top:8px;font-size:14px;align-items:flex-start}
+.cm-av{width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0;background:var(--line)}
+.cm-bubble{background:var(--bg);border-radius:14px;padding:7px 12px;max-width:100%}
+.cm-who{font-weight:700;font-size:13px;display:block}
+.cm-row{display:flex;gap:8px;align-items:center;margin-top:10px}
+.cm-row input{margin:0;flex:1}
+.cm-row button{padding:8px 14px}
 .msg{color:var(--acc);min-height:20px;font-size:14px}
 .hide{display:none}
 .profile{display:flex;align-items:center;gap:12px}
@@ -308,7 +314,7 @@ function setFeedMode(mode) {
 
 async function loadFeed() {
   const { data, error } = await db.from("posts")
-    .select("id,content,created_at,image_url,profiles!posts_user_id_fkey(id,username,avatar_url,city),likes(user_id,reaction),comments(id,content,profiles!comments_user_id_fkey(username))")
+    .select("id,content,created_at,image_url,profiles!posts_user_id_fkey(id,username,avatar_url,city),likes(user_id,reaction),comments(id,content,profiles!comments_user_id_fkey(username,avatar_url))")
     .order("created_at", { ascending: false }).limit(50);
   if (error) { $("feed").innerHTML = '<div class="card msg">' + esc(error.message) + '</div>'; return; }
   lastFeedData = data;
@@ -368,8 +374,11 @@ function renderFeed() {
       (p.image_url ? '<img class="post-img" src="' + esc(p.image_url) + '">' : "") +
       '<div class="acts reactions">' + reactRow +
       '<button class="ghost" onclick="sharePost(' + p.id + ')">Share</button></div>' +
-      p.comments.map(c => '<div class="cm"><span class="who">' + esc(c.profiles && c.profiles.username) + '</span> ' + esc(c.content) + '</div>').join("") +
-      '<input id="c' + p.id + '" placeholder="Write a comment"><button class="ghost" onclick="addComment(' + p.id + ')">Comment</button>' +
+      p.comments.map(c => {
+        const cav = (c.profiles && c.profiles.avatar_url) || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(c.profiles && c.profiles.username || "U");
+        return '<div class="cm"><img class="cm-av" src="' + esc(cav) + '"><div class="cm-bubble"><span class="cm-who">' + esc(c.profiles && c.profiles.username) + '</span>' + esc(c.content) + '</div></div>';
+      }).join("") +
+      '<div class="cm-row"><img class="cm-av" src="' + esc(myProfile.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(myProfile.username)) + '"><input id="c' + p.id + '" placeholder="Write a comment"><button class="ghost" onclick="addComment(' + p.id + ')">\u27A4</button></div>' +
       '</div>';
   }).join("");
 }
