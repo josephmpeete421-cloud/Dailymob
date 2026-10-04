@@ -52,6 +52,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .story-viewer .sv-top{display:flex;align-items:center;gap:8px;padding:12px;color:#fff}
 .story-viewer .sv-close{background:transparent;color:#fff;font-size:20px;margin-left:auto}
 .story-viewers-list{background:#111;color:#fff;padding:10px;font-size:13px;max-height:120px;overflow-y:auto}
+.tag{color:var(--acc);font-weight:600;cursor:pointer}
+.mention{color:var(--acc);font-weight:600}
+.post-img{width:100%;border-radius:10px;margin-top:8px;max-height:400px;object-fit:cover}
+.tag-banner{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin-bottom:10px}
 </style>
 </head>
 <body>
@@ -107,7 +111,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
   <div class="stories-row" id="storiesRow"></div>
   <input id="storyFile" type="file" accept="image/*" class="hide">
   <div class="card">
-    <textarea id="txt" rows="3" placeholder="What's happening?"></textarea>
+    <textarea id="txt" rows="3" placeholder="What's happening? Use #tags and @mentions"></textarea>
+    <input id="postFile" type="file" accept="image/*">
     <button id="post">Post</button>
     <span class="msg" id="pmsg"></span>
   </div>
@@ -277,10 +282,18 @@ $("out").onclick = async () => { await db.auth.signOut(); location.reload(); };
 
 $("post").onclick = async () => {
   const content = $("txt").value.trim();
-  if (!content) return;
-  const { error } = await db.from("posts").insert({ user_id: me.id, content });
+  const file = $("postFile").files[0];
+  if (!content && !file) return;
+  let image_url = null;
+  if (file) {
+    const path = me.id + "/" + Date.now() + "-" + file.name;
+    const { error: upErr } = await db.storage.from("posts").upload(path, file);
+    if (upErr) { $("pmsg").textContent = upErr.message; return; }
+    image_url = db.storage.from("posts").getPublicUrl(path).data.publicUrl;
+  }
+  const { error } = await db.from("posts").insert({ user_id: me.id, content, image_url });
   $("pmsg").textContent = error ? error.message : "";
-  if (!error) { $("txt").value = ""; loadFeed(); loadStreak(); loadStats(); }
+  if (!error) { $("txt").value = ""; $("postFile").value = ""; loadFeed(); loadStreak(); loadStats(); }
 };
 
 let lastFeedData = [];
@@ -295,25 +308,47 @@ function setFeedMode(mode) {
 
 async function loadFeed() {
   const { data, error } = await db.from("posts")
-    .select("id,content,created_at,profiles!posts_user_id_fkey(id,username,avatar_url,city),likes(user_id,reaction),comments(id,content,profiles!comments_user_id_fkey(username))")
+    .select("id,content,created_at,image_url,profiles!posts_user_id_fkey(id,username,avatar_url,city),likes(user_id,reaction),comments(id,content,profiles!comments_user_id_fkey(username))")
     .order("created_at", { ascending: false }).limit(50);
   if (error) { $("feed").innerHTML = '<div class="card msg">' + esc(error.message) + '</div>'; return; }
   lastFeedData = data;
   renderFeed();
 }
 
+function highlightContent(raw) {
+  return esc(raw).replace(/#(\w+)/g, '<span class="tag" onclick="filterByTag(\'$1\')">#$1</span>').replace(/@(\w+)/g, '<span class="mention">@$1</span>');
+}
+
+let currentTagFilter = null;
+
+function filterByTag(tag) {
+  currentTagFilter = tag;
+  renderFeed();
+}
+
+function clearTagFilter() {
+  currentTagFilter = null;
+  renderFeed();
+}
+
 function renderFeed() {
   let data = lastFeedData;
+  let banner = "";
+  if (currentTagFilter) {
+    const re = new RegExp("#" + currentTagFilter + "\\b", "i");
+    data = data.filter(p => re.test(p.content || ""));
+    banner = '<div class="tag-banner">Showing #' + esc(currentTagFilter) + ' <button class="ghost" style="margin-left:auto" onclick="clearTagFilter()">Clear</button></div>';
+  }
   if (feedMode === "nearby") {
     const myCity = (myProfile.city || "").trim().toLowerCase();
     if (!myCity) { $("feed").innerHTML = '<div class="card">Set your city in Edit to see nearby posts.</div>'; return; }
     data = data.filter(p => p.profiles && (p.profiles.city || "").trim().toLowerCase() === myCity);
-    if (!data.length) { $("feed").innerHTML = '<div class="card">No posts from ' + esc(myProfile.city) + ' yet.</div>'; return; }
+    if (!data.length) { $("feed").innerHTML = banner + '<div class="card">No posts from ' + esc(myProfile.city) + ' yet.</div>'; return; }
   } else if (!data.length) {
-    $("feed").innerHTML = '<div class="card">No posts yet. Write the first one.</div>'; return;
+    $("feed").innerHTML = banner + '<div class="card">No posts yet' + (currentTagFilter ? " with that tag" : "") + '. ' + (currentTagFilter ? "" : "Write the first one.") + '</div>'; return;
   }
   const EMOJIS = ["\uD83D\uDC4D", "\u2764\uFE0F", "\uD83D\uDE02", "\uD83D\uDE2E"];
-  $("feed").innerHTML = data.map(p => {
+  $("feed").innerHTML = banner + data.map(p => {
     const av = (p.profiles && p.profiles.avatar_url) || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(p.profiles && p.profiles.username || "U");
     const mine = p.likes.find(l => l.user_id === me.id);
     const mineType = mine ? (mine.reaction || "\uD83D\uDC4D") : null;
@@ -329,7 +364,8 @@ function renderFeed() {
       '<span class="time">' + new Date(p.created_at).toLocaleString() + '</span>' +
       (p.profiles && p.profiles.id !== me.id ? '<button class="ghost" style="margin-left:auto" onclick="toggleFollow(\'' + p.profiles.id + '\',' + myFollowing.has(p.profiles.id) + ')">' + (myFollowing.has(p.profiles.id) ? "Following" : "Follow") + '</button>' : '') +
       '</div>' +
-      '<div>' + esc(p.content) + '</div>' +
+      '<div>' + highlightContent(p.content || "") + '</div>' +
+      (p.image_url ? '<img class="post-img" src="' + esc(p.image_url) + '">' : "") +
       '<div class="acts reactions">' + reactRow +
       '<button class="ghost" onclick="sharePost(' + p.id + ')">Share</button></div>' +
       p.comments.map(c => '<div class="cm"><span class="who">' + esc(c.profiles && c.profiles.username) + '</span> ' + esc(c.content) + '</div>').join("") +
