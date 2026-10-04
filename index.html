@@ -38,6 +38,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .stat{text-align:center}
 .stat b{display:block;font-size:17px}
 .stat span{color:var(--soft);font-size:12px}
+.tabs{display:flex;gap:6px;margin-bottom:10px}
+.tab{flex:1;text-align:center;padding:8px;border-radius:10px;background:var(--card);border:1px solid var(--line);color:var(--soft);font-weight:600}
+.tab.active{background:var(--acc);color:#fff;border-color:var(--acc)}
 </style>
 </head>
 <body>
@@ -80,6 +83,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
     <div id="editBox" class="hide">
       <input id="avatarFile" type="file" accept="image/*">
       <input id="unameInput" placeholder="Username">
+      <input id="cityInput" placeholder="Your city (for the Nearby feed)">
       <textarea id="bioInput" rows="2" placeholder="Write a short bio"></textarea>
       <button id="saveProfile">Save</button>
       <span class="msg" id="profmsg"></span>
@@ -93,6 +97,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
     <textarea id="txt" rows="3" placeholder="What's happening?"></textarea>
     <button id="post">Post</button>
     <span class="msg" id="pmsg"></span>
+  </div>
+  <div class="tabs">
+    <button class="tab active" id="tabAll" onclick="setFeedMode('all')">All</button>
+    <button class="tab" id="tabNear" onclick="setFeedMode('nearby')">Nearby</button>
   </div>
   <div id="feed"></div>
 </section>
@@ -132,6 +140,7 @@ function renderProfile() {
   $("avatarImg").src = myProfile.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(myProfile.username);
   $("bioInput").value = myProfile.bio || "";
   $("unameInput").value = myProfile.username || "";
+  $("cityInput").value = myProfile.city || "";
 }
 
 let myFollowing = new Set();
@@ -217,8 +226,9 @@ $("saveProfile").onclick = async () => {
   }
   const bio = $("bioInput").value.trim();
   const username = $("unameInput").value.trim();
+  const city = $("cityInput").value.trim();
   if (username.length < 3) { $("profmsg").textContent = "Username needs 3+ characters."; return; }
-  const { data, error } = await db.from("profiles").update({ bio, username, avatar_url }).eq("id", me.id).select().single();
+  const { data, error } = await db.from("profiles").update({ bio, username, avatar_url, city }).eq("id", me.id).select().single();
   if (error) { $("profmsg").textContent = error.message; return; }
   myProfile = data;
   renderProfile();
@@ -259,14 +269,34 @@ $("post").onclick = async () => {
 };
 
 let lastFeedData = [];
+let feedMode = "all";
+
+function setFeedMode(mode) {
+  feedMode = mode;
+  $("tabAll").classList.toggle("active", mode === "all");
+  $("tabNear").classList.toggle("active", mode === "nearby");
+  renderFeed();
+}
 
 async function loadFeed() {
   const { data, error } = await db.from("posts")
-    .select("id,content,created_at,profiles!posts_user_id_fkey(id,username,avatar_url),likes(user_id,reaction),comments(id,content,profiles!comments_user_id_fkey(username))")
+    .select("id,content,created_at,profiles!posts_user_id_fkey(id,username,avatar_url,city),likes(user_id,reaction),comments(id,content,profiles!comments_user_id_fkey(username))")
     .order("created_at", { ascending: false }).limit(50);
   if (error) { $("feed").innerHTML = '<div class="card msg">' + esc(error.message) + '</div>'; return; }
   lastFeedData = data;
-  if (!data.length) { $("feed").innerHTML = '<div class="card">No posts yet. Write the first one.</div>'; return; }
+  renderFeed();
+}
+
+function renderFeed() {
+  let data = lastFeedData;
+  if (feedMode === "nearby") {
+    const myCity = (myProfile.city || "").trim().toLowerCase();
+    if (!myCity) { $("feed").innerHTML = '<div class="card">Set your city in Edit to see nearby posts.</div>'; return; }
+    data = data.filter(p => p.profiles && (p.profiles.city || "").trim().toLowerCase() === myCity);
+    if (!data.length) { $("feed").innerHTML = '<div class="card">No posts from ' + esc(myProfile.city) + ' yet.</div>'; return; }
+  } else if (!data.length) {
+    $("feed").innerHTML = '<div class="card">No posts yet. Write the first one.</div>'; return;
+  }
   const EMOJIS = ["\uD83D\uDC4D", "\u2764\uFE0F", "\uD83D\uDE02", "\uD83D\uDE2E"];
   $("feed").innerHTML = data.map(p => {
     const av = (p.profiles && p.profiles.avatar_url) || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(p.profiles && p.profiles.username || "U");
