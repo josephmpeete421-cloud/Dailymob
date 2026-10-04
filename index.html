@@ -41,6 +41,17 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .tabs{display:flex;gap:6px;margin-bottom:10px}
 .tab{flex:1;text-align:center;padding:8px;border-radius:10px;background:var(--card);border:1px solid var(--line);color:var(--soft);font-weight:600}
 .tab.active{background:var(--acc);color:#fff;border-color:var(--acc)}
+.stories-row{display:flex;gap:10px;overflow-x:auto;padding:4px 0 12px}
+.story-item{flex-shrink:0;text-align:center;width:64px}
+.story-ring{width:58px;height:58px;border-radius:50%;padding:2px;background:linear-gradient(45deg,var(--acc),#ffb703);display:flex;align-items:center;justify-content:center}
+.story-ring img{width:100%;height:100%;border-radius:50%;object-fit:cover;border:2px solid var(--bg)}
+.story-name{font-size:11px;color:var(--soft);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.story-add{width:58px;height:58px;border-radius:50%;border:2px dashed var(--line);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--soft)}
+.story-viewer{position:fixed;inset:0;background:#000;z-index:50;display:flex;flex-direction:column}
+.story-viewer img{width:100%;flex:1;object-fit:contain}
+.story-viewer .sv-top{display:flex;align-items:center;gap:8px;padding:12px;color:#fff}
+.story-viewer .sv-close{background:transparent;color:#fff;font-size:20px;margin-left:auto}
+.story-viewers-list{background:#111;color:#fff;padding:10px;font-size:13px;max-height:120px;overflow-y:auto}
 </style>
 </head>
 <body>
@@ -93,6 +104,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
     </div>
   </div>
 
+  <div class="stories-row" id="storiesRow"></div>
+  <input id="storyFile" type="file" accept="image/*" class="hide">
   <div class="card">
     <textarea id="txt" rows="3" placeholder="What's happening?"></textarea>
     <button id="post">Post</button>
@@ -117,6 +130,7 @@ let myProfile = null;
 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
+// dark mode
 const savedTheme = localStorage.getItem("dm-theme");
 if (savedTheme === "dark") document.documentElement.setAttribute("data-theme", "dark");
 $("theme").onclick = () => {
@@ -198,6 +212,7 @@ async function start(user) {
   loadStats();
   loadStreak();
   loadFeed();
+  loadStories();
 }
 
 $("editProfile").onclick = () => $("editBox").classList.toggle("hide");
@@ -368,6 +383,90 @@ async function addComment(id) {
   if (!content) return;
   await db.from("comments").insert({ post_id: id, user_id: me.id, content });
   loadFeed();
+}
+
+let storyGroups = [];
+let currentStoryGroup = null;
+let currentStoryIndex = 0;
+
+async function loadStories() {
+  const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const { data } = await db.from("stories")
+    .select("id,image_url,created_at,user_id,profiles!stories_user_id_fkey(id,username,avatar_url)")
+    .gt("created_at", cutoff).order("created_at", { ascending: true });
+  const groups = {};
+  (data || []).forEach(s => {
+    const uid = s.user_id;
+    if (!groups[uid]) groups[uid] = { user: s.profiles, stories: [] };
+    groups[uid].stories.push(s);
+  });
+  storyGroups = Object.values(groups);
+  renderStoriesRow();
+}
+
+function renderStoriesRow() {
+  const addHtml = '<div class="story-item"><div class="story-add" onclick="document.getElementById(\'storyFile\').click()">+</div><div class="story-name">Your story</div></div>';
+  const others = storyGroups.map(g => {
+    const av = (g.user && g.user.avatar_url) || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(g.user ? g.user.username : "U");
+    return '<div class="story-item" onclick="openStory(\'' + g.user.id + '\')"><div class="story-ring"><img src="' + esc(av) + '"></div><div class="story-name">' + esc(g.user.username) + '</div></div>';
+  }).join("");
+  $("storiesRow").innerHTML = addHtml + others;
+}
+
+$("storyFile").onchange = async () => {
+  const file = $("storyFile").files[0];
+  if (!file) return;
+  const path = me.id + "/" + Date.now() + "-" + file.name;
+  const { error: upErr } = await db.storage.from("stories").upload(path, file);
+  if (upErr) { alert(upErr.message); return; }
+  const url = db.storage.from("stories").getPublicUrl(path).data.publicUrl;
+  await db.from("stories").insert({ user_id: me.id, image_url: url });
+  $("storyFile").value = "";
+  loadStories();
+};
+
+function openStory(userId) {
+  const group = storyGroups.find(g => g.user && g.user.id === userId);
+  if (!group) return;
+  currentStoryGroup = group;
+  currentStoryIndex = 0;
+  showStoryFrame();
+}
+
+function showStoryFrame() {
+  const g = currentStoryGroup;
+  const s = g.stories[currentStoryIndex];
+  if (!s) { closeStoryViewer(); return; }
+  if (g.user.id !== me.id) {
+    db.from("story_views").insert({ story_id: s.id, viewer_id: me.id }).then(() => {});
+  }
+  const overlay = document.createElement("div");
+  overlay.className = "story-viewer";
+  overlay.id = "storyOverlay";
+  overlay.innerHTML =
+    '<div class="sv-top"><b>' + esc(g.user.username) + '</b><span style="opacity:.7;font-size:12px">' + new Date(s.created_at).toLocaleString() + '</span><button class="sv-close" onclick="closeStoryViewer()">\u2715</button></div>' +
+    '<img src="' + esc(s.image_url) + '" onclick="nextStoryFrame()">' +
+    (g.user.id === me.id ? '<div class="story-viewers-list" id="storyViewersList">Loading views...</div>' : "");
+  document.body.appendChild(overlay);
+  if (g.user.id === me.id) {
+    db.from("story_views").select("profiles!story_views_viewer_id_fkey(username)").eq("story_id", s.id).then(({ data }) => {
+      const names = (data || []).map(v => v.profiles && v.profiles.username).filter(Boolean);
+      const el = $("storyViewersList");
+      if (el) el.textContent = names.length ? ("Seen by: " + names.join(", ")) : "No views yet.";
+    });
+  }
+}
+
+function nextStoryFrame() {
+  currentStoryIndex++;
+  closeStoryViewer(true);
+  if (currentStoryGroup && currentStoryIndex < currentStoryGroup.stories.length) showStoryFrame();
+}
+
+function closeStoryViewer(skipGroupReset) {
+  const el = $("storyOverlay");
+  if (el) el.remove();
+  if (!skipGroupReset) currentStoryGroup = null;
 }
 
 function sharePost(id) {
