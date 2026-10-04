@@ -34,6 +34,12 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .cm-row input{margin:0;flex:1}
 .cm-row button{padding:8px 14px}
 .file-btn{display:inline-flex;align-items:center;gap:6px;background:var(--bg);color:var(--soft);border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-weight:600;cursor:pointer;margin:5px 0}
+.who{cursor:pointer}
+.profile-view{position:fixed;inset:0;background:var(--bg);z-index:60;overflow-y:auto;padding:16px}
+.heart-pop{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) scale(0);font-size:70px;pointer-events:none;animation:heartpop .8s ease-out forwards;z-index:3}
+@keyframes heartpop{0%{transform:translate(-50%,-50%) scale(0);opacity:0}30%{transform:translate(-50%,-50%) scale(1.2);opacity:1}100%{transform:translate(-50%,-50%) scale(1.4);opacity:0}}
+.post-media-wrap{position:relative}
+.comments-toggle{color:var(--soft);font-size:13px;margin-top:6px;cursor:pointer}
 .msg{color:var(--acc);min-height:20px;font-size:14px}
 .hide{display:none}
 .profile{display:flex;align-items:center;gap:12px}
@@ -121,7 +127,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
   <input id="storyFile" type="file" accept="image/*" class="hide">
   <div class="card">
     <textarea id="txt" rows="3" placeholder="What's happening? Use #tags and @mentions"></textarea>
-    <input id="postFile" type="file" accept="image/*" class="hide">
+    <input id="postFile" type="file" accept="image/*,video/*" class="hide">
     <label for="postFile" class="file-btn" id="postFileLabel">\uD83D\uDCF7 Add photo</label>
     <button id="post">Post</button>
     <span class="msg" id="pmsg"></span>
@@ -133,6 +139,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
   <div id="feed"></div>
 </section>
 </main>
+<div id="profileView" class="profile-view hide"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.js"></script>
 <script>
@@ -300,13 +307,14 @@ $("post").onclick = async () => {
   const file = $("postFile").files[0];
   if (!content && !file) return;
   let image_url = null;
+  const isVideo = file && file.type.startsWith("video");
   if (file) {
     const path = me.id + "/" + Date.now() + "-" + file.name;
     const { error: upErr } = await db.storage.from("posts").upload(path, file);
     if (upErr) { $("pmsg").textContent = upErr.message; return; }
     image_url = db.storage.from("posts").getPublicUrl(path).data.publicUrl;
   }
-  const { error } = await db.from("posts").insert({ user_id: me.id, content, image_url });
+  const { error } = await db.from("posts").insert({ user_id: me.id, content, image_url, is_video: isVideo });
   $("pmsg").textContent = error ? error.message : "";
   if (!error) { $("txt").value = ""; $("postFile").value = ""; $("postFileLabel").textContent = "\uD83D\uDCF7 Add photo"; loadFeed(); loadStreak(); loadStats(); }
 };
@@ -323,7 +331,7 @@ function setFeedMode(mode) {
 
 async function loadFeed() {
   const { data, error } = await db.from("posts")
-    .select("id,content,created_at,image_url,profiles!posts_user_id_fkey(id,username,avatar_url,city),likes(user_id,reaction),comments(id,content,profiles!comments_user_id_fkey(username,avatar_url))")
+    .select("id,content,created_at,image_url,is_video,profiles!posts_user_id_fkey(id,username,avatar_url,city),likes(user_id,reaction),comments(id,content,profiles!comments_user_id_fkey(id,username,avatar_url))")
     .order("created_at", { ascending: false }).limit(50);
   if (error) { $("feed").innerHTML = '<div class="card msg">' + esc(error.message) + '</div>'; return; }
   lastFeedData = data;
@@ -375,18 +383,24 @@ function renderFeed() {
     return '<div class="card">' +
       '<div class="profile" style="margin-bottom:8px">' +
       '<img class="avatar" style="width:34px;height:34px" src="' + esc(av) + '">' +
-      '<span class="who">' + esc(p.profiles && p.profiles.username) + '</span>' +
+      '<span class="who" onclick="openProfile(\'' + (p.profiles && p.profiles.id) + '\')">' + esc(p.profiles && p.profiles.username) + '</span>' +
       '<span class="time">' + new Date(p.created_at).toLocaleString() + '</span>' +
       (p.profiles && p.profiles.id !== me.id ? '<button class="ghost" style="margin-left:auto" onclick="toggleFollow(\'' + p.profiles.id + '\',' + myFollowing.has(p.profiles.id) + ')">' + (myFollowing.has(p.profiles.id) ? "Following" : "Follow") + '</button>' : '') +
       '</div>' +
+      '<div class="post-media-wrap" ondblclick="doubleTapLike(' + p.id + ',this)">' +
       '<div>' + highlightContent(p.content || "") + '</div>' +
-      (p.image_url ? '<img class="post-img" src="' + esc(p.image_url) + '">' : "") +
+      (p.image_url ? (p.is_video ? '<video class="post-img" src="' + esc(p.image_url) + '" controls></video>' : '<img class="post-img" src="' + esc(p.image_url) + '">') : "") +
+      '</div>' +
+      (p.profiles && p.profiles.id === me.id ? '<div class="acts"><button class="ghost" onclick="editPost(' + p.id + ')">Edit</button><button class="ghost" onclick="deletePost(' + p.id + ')">Delete</button></div>' : "") +
       '<div class="acts reactions">' + reactRow +
       '<button class="ghost" onclick="sharePost(' + p.id + ')">Share</button></div>' +
+      (p.comments.length ? '<div class="comments-toggle" onclick="toggleComments(' + p.id + ')" id="ctoggle' + p.id + '">View ' + p.comments.length + ' comment' + (p.comments.length > 1 ? "s" : "") + '</div>' : "") +
+      '<div class="hide" id="clist' + p.id + '">' +
       p.comments.map(c => {
         const cav = (c.profiles && c.profiles.avatar_url) || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(c.profiles && c.profiles.username || "U");
-        return '<div class="cm"><img class="cm-av" src="' + esc(cav) + '"><div class="cm-bubble"><span class="cm-who">' + esc(c.profiles && c.profiles.username) + '</span>' + esc(c.content) + '</div></div>';
+        return '<div class="cm"><img class="cm-av" src="' + esc(cav) + '"><div class="cm-bubble"><span class="cm-who who" onclick="openProfile(\'' + (c.profiles && c.profiles.id) + '\')">' + esc(c.profiles && c.profiles.username) + '</span>' + esc(c.content) + '</div></div>';
       }).join("") +
+      '</div>' +
       '<div class="cm-row"><img class="cm-av" src="' + esc(myProfile.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(myProfile.username)) + '"><input id="c' + p.id + '" placeholder="Write a comment"><button class="ghost" onclick="addComment(' + p.id + ')">\u27A4</button></div>' +
       '</div>';
   }).join("");
@@ -430,6 +444,73 @@ function mainReact(id) {
 function pickReact(id, type) {
   $("picker" + id).classList.add("hide");
   react(id, type);
+}
+
+function toggleComments(id) {
+  const list = $("clist" + id), toggle = $("ctoggle" + id);
+  const show = list.classList.contains("hide");
+  list.classList.toggle("hide");
+  if (toggle) toggle.textContent = show ? "Hide comments" : toggle.textContent.replace("Hide comments", "View comments");
+}
+
+function doubleTapLike(id, el) {
+  react(id, "\u2764\uFE0F");
+  const heart = document.createElement("div");
+  heart.className = "heart-pop";
+  heart.textContent = "\u2764\uFE0F";
+  el.appendChild(heart);
+  setTimeout(() => heart.remove(), 800);
+}
+
+async function editPost(id) {
+  const post = lastFeedData.find(p => p.id === id);
+  if (!post) return;
+  const next = prompt("Edit your post:", post.content || "");
+  if (next === null) return;
+  await db.from("posts").update({ content: next }).eq("id", id);
+  loadFeed();
+}
+
+async function deletePost(id) {
+  if (!confirm("Delete this post? This cannot be undone.")) return;
+  await db.from("posts").delete().eq("id", id);
+  loadFeed();
+  loadStats();
+  loadStreak();
+}
+
+async function openProfile(userId) {
+  if (!userId) return;
+  const { data: prof } = await db.from("profiles").select("*").eq("id", userId).maybeSingle();
+  if (!prof) return;
+  const { data: posts } = await db.from("posts").select("id,content,created_at,image_url,is_video").eq("user_id", userId).order("created_at", { ascending: false });
+  const [{ count: followersCount }, { count: followingCount }] = await Promise.all([
+    db.from("follows").select("follower_id", { count: "exact", head: true }).eq("following_id", userId),
+    db.from("follows").select("following_id", { count: "exact", head: true }).eq("follower_id", userId)
+  ]);
+  const av = prof.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(prof.username);
+  const isMe = userId === me.id;
+  const postsHtml = (posts || []).map(p =>
+    '<div class="card">' +
+    '<div class="time">' + new Date(p.created_at).toLocaleString() + '</div>' +
+    '<div>' + highlightContent(p.content || "") + '</div>' +
+    (p.image_url ? (p.is_video ? '<video class="post-img" src="' + esc(p.image_url) + '" controls></video>' : '<img class="post-img" src="' + esc(p.image_url) + '">') : "") +
+    (isMe ? '<div class="acts"><button class="ghost" onclick="editPost(' + p.id + ');openProfile(\'' + userId + '\')">Edit</button><button class="ghost" onclick="deletePost(' + p.id + ');closeProfileView()">Delete</button></div>' : "") +
+    '</div>'
+  ).join("") || '<div class="card">No posts yet.</div>';
+  $("profileView").innerHTML =
+    '<button class="ghost" onclick="closeProfileView()">\u2190 Back</button>' +
+    '<div class="card"><div class="profile">' +
+    '<img class="avatar" src="' + esc(av) + '">' +
+    '<div class="pinfo"><div class="pname">' + esc(prof.username) + '</div><div class="pbio">' + esc(prof.bio || "No bio yet.") + '</div></div>' +
+    (!isMe ? '<button class="ghost" onclick="toggleFollow(\'' + userId + '\',' + myFollowing.has(userId) + ');openProfile(\'' + userId + '\')">' + (myFollowing.has(userId) ? "Following" : "Follow") + '</button>' : "") +
+    '</div><div class="stats"><div class="stat"><b>' + (posts ? posts.length : 0) + '</b><span>Posts</span></div><div class="stat"><b>' + (followersCount || 0) + '</b><span>Followers</span></div><div class="stat"><b>' + (followingCount || 0) + '</b><span>Following</span></div></div></div>' +
+    postsHtml;
+  $("profileView").classList.remove("hide");
+}
+
+function closeProfileView() {
+  $("profileView").classList.add("hide");
 }
 
 async function addComment(id) {
@@ -498,7 +579,9 @@ function showStoryFrame() {
   overlay.className = "story-viewer";
   overlay.id = "storyOverlay";
   overlay.innerHTML =
-    '<div class="sv-top"><b>' + esc(g.user.username) + '</b><span style="opacity:.7;font-size:12px">' + new Date(s.created_at).toLocaleString() + '</span><button class="sv-close" onclick="closeStoryViewer()">\u2715</button></div>' +
+    '<div class="sv-top"><b>' + esc(g.user.username) + '</b><span style="opacity:.7;font-size:12px">' + new Date(s.created_at).toLocaleString() + '</span>' +
+    (g.user.id === me.id ? '<button class="sv-close" onclick="deleteStory(' + s.id + ')" style="margin-left:auto;font-size:14px">Delete</button>' : "") +
+    '<button class="sv-close" onclick="closeStoryViewer()">\u2715</button></div>' +
     '<img src="' + esc(s.image_url) + '" onclick="nextStoryFrame()">' +
     (g.user.id !== me.id ? '<div class="story-react-row">' + ["\uD83D\uDC4D", "\u2764\uFE0F", "\uD83D\uDE02", "\uD83D\uDE2E"].map(e => '<button onclick="reactStory(' + s.id + ',\'' + e + '\')">' + e + '</button>').join("") + '</div>' : "") +
     (g.user.id === me.id ? '<div class="story-viewers-list" id="storyViewersList">Loading views...</div>' : "");
@@ -516,6 +599,13 @@ async function reactStory(storyId, emoji) {
   await db.from("story_views").upsert({ story_id: storyId, viewer_id: me.id, reaction: emoji }, { onConflict: "story_id,viewer_id" });
   const row = document.querySelector(".story-react-row");
   if (row) row.innerHTML = '<span style="color:#fff;font-size:20px">' + emoji + ' sent</span>';
+}
+
+async function deleteStory(storyId) {
+  if (!confirm("Delete this story?")) return;
+  await db.from("stories").delete().eq("id", storyId);
+  closeStoryViewer();
+  loadStories();
 }
 
 function nextStoryFrame() {
