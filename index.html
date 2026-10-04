@@ -23,7 +23,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .who{font-weight:700}.time{color:var(--soft);font-size:13px;margin-left:6px}
 .acts{display:flex;gap:6px;margin-top:8px}
 .liked{color:var(--acc);font-weight:700}
-.reactions{display:flex;gap:4px;flex-wrap:wrap}
+.reactions{display:flex;gap:4px;flex-wrap:wrap;align-items:center;position:relative}
+.react-picker{display:flex;gap:2px;position:absolute;bottom:38px;left:0;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:4px;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:5}
+.react-picker button{font-size:20px;padding:4px 8px}
 .cm{border-top:1px solid var(--line);margin-top:8px;padding-top:6px;font-size:15px}
 .msg{color:var(--acc);min-height:20px;font-size:14px}
 .hide{display:none}
@@ -268,11 +270,13 @@ async function loadFeed() {
   const EMOJIS = ["\uD83D\uDC4D", "\u2764\uFE0F", "\uD83D\uDE02", "\uD83D\uDE2E"];
   $("feed").innerHTML = data.map(p => {
     const av = (p.profiles && p.profiles.avatar_url) || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(p.profiles && p.profiles.username || "U");
-    const reactRow = EMOJIS.map(e => {
-      const count = p.likes.filter(l => (l.reaction || "\uD83D\uDC4D") === e).length;
-      const mine = p.likes.some(l => l.user_id === me.id && (l.reaction || "\uD83D\uDC4D") === e);
-      return '<button class="ghost ' + (mine ? "liked" : "") + '" onclick="react(' + p.id + ',\'' + e + '\')">' + e + ' ' + count + '</button>';
-    }).join("");
+    const mine = p.likes.find(l => l.user_id === me.id);
+    const mineType = mine ? (mine.reaction || "\uD83D\uDC4D") : null;
+    const total = p.likes.length;
+    const pickerBtns = EMOJIS.map(e => '<button onclick="pickReact(' + p.id + ',\'' + e + '\')">' + e + '</button>').join("");
+    const reactRow = '<button class="ghost ' + (mine ? "liked" : "") + '" onclick="mainReact(' + p.id + ')" ontouchstart="startHold(' + p.id + ')" ontouchend="endHold()" onmousedown="startHold(' + p.id + ')" onmouseup="endHold()">' +
+      (mineType || "\uD83D\uDC4D") + ' ' + total + '</button>' +
+      '<div class="react-picker hide" id="picker' + p.id + '">' + pickerBtns + '</div>';
     return '<div class="card">' +
       '<div class="profile" style="margin-bottom:8px">' +
       '<img class="avatar" style="width:34px;height:34px" src="' + esc(av) + '">' +
@@ -301,6 +305,32 @@ async function react(id, type) {
     await db.from("likes").insert({ post_id: id, user_id: me.id, reaction: type });
   }
   loadFeed();
+}
+
+let holdTimer = null, heldLong = false;
+
+function startHold(id) {
+  heldLong = false;
+  holdTimer = setTimeout(() => { heldLong = true; openPicker(id); }, 400);
+}
+
+function endHold() { clearTimeout(holdTimer); }
+
+function openPicker(id) {
+  document.querySelectorAll(".react-picker").forEach(el => { if (el.id !== "picker" + id) el.classList.add("hide"); });
+  $("picker" + id).classList.remove("hide");
+}
+
+function mainReact(id) {
+  if (heldLong) { heldLong = false; return; }
+  const post = lastFeedData.find(p => p.id === id);
+  const mine = post && post.likes.find(l => l.user_id === me.id);
+  react(id, mine ? (mine.reaction || "\uD83D\uDC4D") : "\uD83D\uDC4D");
+}
+
+function pickReact(id, type) {
+  $("picker" + id).classList.add("hide");
+  react(id, type);
 }
 
 async function addComment(id) {
