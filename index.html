@@ -87,7 +87,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 <header>
   <h1>Daily <span>Mob</span></h1>
   <div class="hdr-btns">
-    <button id="msgs" class="icon hide" title="Messages" onclick="openChatList()">\uD83D\uDCAC</button>
+    <button id="msgs" class="icon hide" title="Messages" onclick="openChatList()">💬</button>
     <button id="theme" class="icon" title="Toggle dark mode">&#9789;</button>
     <button id="out" class="ghost hide">Log out</button>
   </div>
@@ -138,10 +138,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
   <div class="card">
     <textarea id="txt" rows="3" placeholder="What's happening? Use #tags and @mentions"></textarea>
     <div style="position:relative;display:inline-block">
-      <button type="button" class="file-btn" id="addMediaBtn" onclick="toggleMediaMenu()">+ Add media</button>
-      <div class="hide" id="mediaMenu" style="position:absolute;top:110%;left:0;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px;display:flex;gap:6px;z-index:5;white-space:nowrap">
-        <button type="button" class="ghost" onclick="pickMedia('image')">\uD83D\uDCF7 Photo</button>
-        <button type="button" class="ghost" onclick="pickMedia('video')">\uD83C\uDFA5 Video</button>
+      <button type="button" class="icon" id="addMediaBtn" onclick="toggleMediaMenu()" style="border:1px solid var(--line);border-radius:50%;width:40px;height:40px">📎</button>
+      <div class="hide" id="mediaMenu" style="position:absolute;top:110%;left:0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px;display:flex;flex-direction:column;z-index:5;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,.15)">
+        <button type="button" class="ghost" onclick="pickMedia('image')">📷 Photo</button>
+        <button type="button" class="ghost" onclick="pickMedia('video')">🎥 Video</button>
       </div>
     </div>
     <input id="postFile" type="file" class="hide">
@@ -549,6 +549,81 @@ async function openProfile(userId) {
 
 function closeProfileView() {
   $("profileView").classList.add("hide");
+}
+
+async function openChatList() {
+  const { data } = await db.from("messages")
+    .select("id,content,created_at,sender_id,receiver_id,sender:profiles!messages_sender_id_fkey(id,username,avatar_url),receiver:profiles!messages_receiver_id_fkey(id,username,avatar_url)")
+    .or("sender_id.eq." + me.id + ",receiver_id.eq." + me.id)
+    .order("created_at", { ascending: false });
+  const convos = {};
+  (data || []).forEach(m => {
+    const other = m.sender_id === me.id ? m.receiver : m.sender;
+    if (!other) return;
+    if (!convos[other.id]) convos[other.id] = { user: other, last: m };
+  });
+  const list = Object.values(convos);
+  const html = list.length ? list.map(c => {
+    const av = (c.user.avatar_url) || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(c.user.username);
+    return '<div class="chat-convo" onclick="openChatThread(\'' + c.user.id + '\',\'' + esc(c.user.username) + '\')">' +
+      '<img class="avatar" src="' + esc(av) + '">' +
+      '<div><div class="who">' + esc(c.user.username) + '</div><div class="chat-preview">' + esc(c.last.content) + '</div></div>' +
+      '</div>';
+  }).join("") : '<div class="card">No messages yet. Open someone\u2019s profile and tap Message.</div>';
+  $("chatListView").innerHTML = '<button class="ghost" onclick="closeChatList()">\u2190 Back</button><h1 style="margin:10px 0">Messages</h1>' + html;
+  $("chatListView").classList.remove("hide");
+}
+
+function closeChatList() { $("chatListView").classList.add("hide"); }
+
+let chatPollTimer = null;
+let currentChatUser = null;
+
+async function openChatThread(otherId, otherName) {
+  currentChatUser = otherId;
+  closeChatList();
+  closeProfileView();
+  await renderChatThread(otherId, otherName);
+  $("chatThreadView").classList.remove("hide");
+  clearInterval(chatPollTimer);
+  chatPollTimer = setInterval(() => renderChatThread(otherId, otherName, true), 5000);
+}
+
+async function renderChatThread(otherId, otherName, silent) {
+  const { data } = await db.from("messages")
+    .select("id,content,created_at,sender_id")
+    .or("and(sender_id.eq." + me.id + ",receiver_id.eq." + otherId + "),and(sender_id.eq." + otherId + ",receiver_id.eq." + me.id + ")")
+    .order("created_at", { ascending: true });
+  const msgsHtml = (data || []).map(m =>
+    '<div class="bubble-row ' + (m.sender_id === me.id ? "mine" : "") + '"><div class="bubble">' + esc(m.content) + '</div></div>'
+  ).join("") || '<div class="card">Say hello!</div>';
+  if (silent) {
+    const box = $("chatThreadMsgs");
+    if (box) { box.innerHTML = msgsHtml; box.scrollTop = box.scrollHeight; }
+    return;
+  }
+  $("chatThreadView").innerHTML =
+    '<button class="ghost" onclick="closeChatThread()">\u2190 Back</button>' +
+    '<h1 style="margin:10px 0">' + esc(otherName) + '</h1>' +
+    '<div class="chat-thread-msgs" id="chatThreadMsgs">' + msgsHtml + '</div>' +
+    '<div class="cm-row"><input id="chatInput" placeholder="Type a message"><button class="ghost" onclick="sendChatMessage(\'' + otherId + '\',\'' + esc(otherName) + '\')">\u27A4</button></div>';
+  const box = $("chatThreadMsgs");
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
+async function sendChatMessage(otherId, otherName) {
+  const input = $("chatInput");
+  const content = input.value.trim();
+  if (!content) return;
+  input.value = "";
+  await db.from("messages").insert({ sender_id: me.id, receiver_id: otherId, content });
+  renderChatThread(otherId, otherName, true);
+}
+
+function closeChatThread() {
+  clearInterval(chatPollTimer);
+  currentChatUser = null;
+  $("chatThreadView").classList.add("hide");
 }
 
 async function addComment(id) {
