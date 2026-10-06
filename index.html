@@ -58,6 +58,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .media-dropdown{position:absolute;top:110%;left:0;background:var(--card);border-radius:12px;min-width:160px;box-shadow:0 8px 24px rgba(0,0,0,.3);z-index:25;overflow:hidden}
 .media-dropdown button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:transparent;color:var(--ink);border-radius:0;padding:12px 14px;font-weight:600;border-bottom:1px solid var(--line)}
 .media-dropdown button:last-child{border-bottom:none}
+.dash-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.dash-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.dash-card b{display:block;font-size:26px}
+.dash-card span{color:var(--soft);font-size:13px}
 .msg{color:var(--acc);min-height:20px;font-size:14px}
 .hide{display:none}
 .profile{display:flex;align-items:center;gap:12px}
@@ -96,6 +100,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 <header>
   <h1>Daily <span>Mob</span></h1>
   <div class="hdr-btns">
+    <button id="dash" class="icon hide" title="Dashboard" onclick="openDashboard()">📊</button>
     <span style="position:relative;display:inline-block">
       <button id="msgs" class="icon hide" title="Messages" onclick="openChatList()">💬</button>
       <span id="msgBadge" class="hide" style="position:absolute;top:-2px;right:-2px;background:var(--acc);color:#fff;border-radius:50%;font-size:10px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 3px">0</span>
@@ -172,6 +177,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 <div id="profileView" class="profile-view hide"></div>
 <div id="chatListView" class="profile-view hide"></div>
 <div id="chatThreadView" class="profile-view hide"></div>
+<div id="dashboardView" class="profile-view hide"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.js"></script>
 <script>
@@ -263,6 +269,7 @@ async function start(user) {
   $("app").classList.remove("hide");
   $("out").classList.remove("hide");
   $("msgs").classList.remove("hide");
+  $("dash").classList.remove("hide");
   loadUnreadCount();
   clearInterval(unreadPollTimer);
   unreadPollTimer = setInterval(loadUnreadCount, 15000);
@@ -633,18 +640,30 @@ async function openChatThread(otherId, otherName) {
 
 async function renderChatThread(otherId, otherName, silent) {
   const { data } = await db.from("messages")
-    .select("id,content,created_at,sender_id")
+    .select("id,content,created_at,sender_id,seen")
     .or("and(sender_id.eq." + me.id + ",receiver_id.eq." + otherId + "),and(sender_id.eq." + otherId + ",receiver_id.eq." + me.id + ")")
     .order("created_at", { ascending: true });
-  const msgsHtml = (data || []).map(m =>
-    '<div class="bubble-row ' + (m.sender_id === me.id ? "mine" : "") + '"><div class="bubble">' + esc(m.content) + '</div></div>'
+  const list = data || [];
+  let lastMineIdx = -1;
+  list.forEach((m, i) => { if (m.sender_id === me.id) lastMineIdx = i; });
+  const msgsHtml = list.map((m, i) =>
+    '<div class="bubble-row ' + (m.sender_id === me.id ? "mine" : "") + '"><div class="bubble">' + esc(m.content) +
+    (i === lastMineIdx && m.seen ? '<div style="font-size:11px;opacity:.7;margin-top:2px">Seen</div>' : "") +
+    '</div></div>'
   ).join("") || '<div class="card">Say hello!</div>';
   if (silent) {
     const box = $("chatThreadMsgs");
     if (box) { box.innerHTML = msgsHtml; box.scrollTop = box.scrollHeight; }
     return;
   }
-  const WALLPAPERS = ["#eef0f7", "#ffe8ec", "#e6f4ea", "#eee6fb", "#fff4de", "#14141f"];
+  const WALLPAPERS = [
+    "linear-gradient(135deg,#d9fdd3,#aee9c9)",
+    "linear-gradient(135deg,#ffe3ec,#ffc2d4)",
+    "linear-gradient(135deg,#e0ecff,#c7d8ff)",
+    "linear-gradient(135deg,#fff2d8,#ffdca0)",
+    "linear-gradient(135deg,#eadcfb,#d3b8f0)",
+    "linear-gradient(135deg,#1c1c2b,#0d0d16)"
+  ];
   $("chatThreadView").innerHTML =
     '<button class="ghost" onclick="closeChatThread()">\u2190 Back</button>' +
     '<h1 style="margin:10px 0">' + esc(otherName) + ' <button class="ghost" onclick="toggleWallpaperPicker()" style="font-size:16px">\uD83C\uDFA8</button></h1>' +
@@ -677,6 +696,38 @@ function setChatWallpaper(otherId, color) {
   if (box) box.style.background = color;
   toggleWallpaperPicker();
 }
+
+async function openDashboard() {
+  const [{ count: postsCount }, { count: followersCount }, { count: followingCount }, { data: myPosts }, { count: storiesCount }] = await Promise.all([
+    db.from("posts").select("id", { count: "exact", head: true }).eq("user_id", me.id),
+    db.from("follows").select("follower_id", { count: "exact", head: true }).eq("following_id", me.id),
+    db.from("follows").select("following_id", { count: "exact", head: true }).eq("follower_id", me.id),
+    db.from("posts").select("id").eq("user_id", me.id),
+    db.from("stories").select("id", { count: "exact", head: true }).eq("user_id", me.id)
+  ]);
+  let likesCount = 0, commentsCount = 0;
+  if (myPosts && myPosts.length) {
+    const ids = myPosts.map(p => p.id);
+    const [{ count: lc }, { count: cc }] = await Promise.all([
+      db.from("likes").select("post_id", { count: "exact", head: true }).in("post_id", ids),
+      db.from("comments").select("post_id", { count: "exact", head: true }).in("post_id", ids)
+    ]);
+    likesCount = lc || 0; commentsCount = cc || 0;
+  }
+  const streakText = $("statStreak") ? $("statStreak").textContent : "0";
+  const cards = [
+    [postsCount || 0, "Posts"], [followersCount || 0, "Followers"], [followingCount || 0, "Following"],
+    [likesCount, "Reactions received"], [commentsCount, "Comments received"], [storiesCount || 0, "Stories posted"],
+    [streakText, "\uD83D\uDD25 Day streak"]
+  ];
+  $("dashboardView").innerHTML =
+    '<button class="ghost" onclick="closeDashboard()">\u2190 Back</button>' +
+    '<h1 style="margin:10px 0">Your Dashboard</h1>' +
+    '<div class="dash-grid">' + cards.map(c => '<div class="dash-card"><b>' + c[0] + '</b><span>' + c[1] + '</span></div>').join("") + '</div>';
+  $("dashboardView").classList.remove("hide");
+}
+
+function closeDashboard() { $("dashboardView").classList.add("hide"); }
 
 function closeChatThread() {
   clearInterval(chatPollTimer);
