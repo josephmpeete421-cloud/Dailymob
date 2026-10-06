@@ -54,6 +54,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .post-preview{position:relative;margin:8px 0;display:inline-block}
 .post-preview img,.post-preview video{max-width:100%;max-height:220px;border-radius:10px;display:block}
 .post-preview .remove-x{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer}
+.media-menu-wrap{position:relative;display:inline-block}
+.media-dropdown{position:absolute;top:110%;left:0;background:var(--card);border-radius:12px;min-width:160px;box-shadow:0 8px 24px rgba(0,0,0,.3);z-index:25;overflow:hidden}
+.media-dropdown button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:transparent;color:var(--ink);border-radius:0;padding:12px 14px;font-weight:600;border-bottom:1px solid var(--line)}
+.media-dropdown button:last-child{border-bottom:none}
 .msg{color:var(--acc);min-height:20px;font-size:14px}
 .hide{display:none}
 .profile{display:flex;align-items:center;gap:12px}
@@ -145,11 +149,13 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
   <input id="storyFile" type="file" accept="image/*" class="hide">
   <div class="card">
     <textarea id="txt" rows="3" placeholder="What's happening? Use #tags and @mentions"></textarea>
-    <button type="button" class="icon" id="addMediaBtn" onclick="toggleMediaMenu()" style="border:1px solid var(--line);border-radius:50%;width:40px;height:40px">📎</button>
-    <div class="hide" id="mediaMenuBackdrop" onclick="toggleMediaMenu()" style="position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:19"></div>
-    <div class="hide" id="mediaMenu" style="position:fixed;left:16px;right:16px;bottom:16px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:8px;z-index:20;box-shadow:0 8px 24px rgba(0,0,0,.3);display:flex;flex-direction:column;gap:4px">
-      <button type="button" class="ghost" onclick="pickMedia('image')" style="text-align:left">📷 Photo</button>
-      <button type="button" class="ghost" onclick="pickMedia('video')" style="text-align:left">🎥 Video</button>
+    <div class="hide" id="mediaMenuBackdrop" onclick="toggleMediaMenu()" style="position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:20"></div>
+    <div class="media-menu-wrap">
+      <button type="button" class="icon" id="addMediaBtn" onclick="toggleMediaMenu()" style="border:1px solid var(--line);border-radius:50%;width:40px;height:40px">📎</button>
+      <div class="hide media-dropdown" id="mediaMenu">
+        <button type="button" onclick="pickMedia('image')">📷 Photo</button>
+        <button type="button" onclick="pickMedia('video')">🎥 Video</button>
+      </div>
     </div>
     <input id="postFile" type="file" class="hide">
     <div id="postPreview"></div>
