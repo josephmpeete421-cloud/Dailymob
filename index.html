@@ -116,10 +116,6 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
       <button id="notif" class="icon hide" title="Notifications" onclick="openNotifications()">🔔</button>
       <span id="notifBadge" class="hide" style="position:absolute;top:-2px;right:-2px;background:var(--acc);color:#fff;border-radius:50%;font-size:10px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 3px">0</span>
     </span>
-    <span style="position:relative;display:inline-block">
-      <button id="notif" class="icon hide" title="Notifications" onclick="openNotifications()">🔔</button>
-      <span id="notifBadge" class="hide" style="position:absolute;top:-2px;right:-2px;background:var(--acc);color:#fff;border-radius:50%;font-size:10px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 3px">0</span>
-    </span>
     <button id="dash" class="icon hide" title="Dashboard" onclick="openDashboard()">📊</button>
     <span style="position:relative;display:inline-block">
       <button id="msgs" class="icon hide" title="Messages" onclick="openChatList()">💬</button>
@@ -171,7 +167,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
   </div>
 
   <div class="stories-row" id="storiesRow"></div>
-  <input id="storyFile" type="file" accept="image/*" class="hide">
+  <input id="storyFile" type="file" accept="image/*,video/*" class="hide">
   <div class="card">
     <textarea id="txt" rows="3" placeholder="What's happening? Use #tags and @mentions"></textarea>
     <div class="hide" id="mediaMenuBackdrop" onclick="toggleMediaMenu()" style="position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:20"></div>
@@ -850,51 +846,6 @@ async function loadWeeklyAnalytics() {
 
 function closeDashboard() { $("dashboardView").classList.add("hide"); }
 
-async function gatherNotifications() {
-  const { data: myPosts } = await db.from("posts").select("id,content").eq("user_id", me.id);
-  const ids = (myPosts || []).map(p => p.id);
-  const idMap = {}; (myPosts || []).forEach(p => idMap[p.id] = p.content);
-  let likeRows = [], commentRows = [], followRows = [];
-  if (ids.length) {
-    const [{ data: lr }, { data: cr }] = await Promise.all([
-      db.from("likes").select("post_id,user_id,created_at,reaction,profiles!likes_user_id_fkey(username)").in("post_id", ids).neq("user_id", me.id).order("created_at", { ascending: false }).limit(30),
-      db.from("comments").select("post_id,user_id,created_at,profiles!comments_user_id_fkey(username)").in("post_id", ids).neq("user_id", me.id).order("created_at", { ascending: false }).limit(30)
-    ]);
-    likeRows = lr || []; commentRows = cr || [];
-  }
-  const { data: fr } = await db.from("follows").select("follower_id,created_at,profiles!follows_follower_id_fkey(username)").eq("following_id", me.id).order("created_at", { ascending: false }).limit(30);
-  followRows = fr || [];
-  const items = [];
-  likeRows.forEach(r => items.push({ type: "like", time: r.created_at, text: (r.profiles && r.profiles.username || "Someone") + " reacted " + (r.reaction || "\uD83D\uDC4D") + " to your post" }));
-  commentRows.forEach(r => items.push({ type: "comment", time: r.created_at, text: (r.profiles && r.profiles.username || "Someone") + " commented on your post" }));
-  followRows.forEach(r => items.push({ type: "follow", time: r.created_at, text: (r.profiles && r.profiles.username || "Someone") + " started following you" }));
-  items.sort((a, b) => new Date(b.time) - new Date(a.time));
-  return items;
-}
-
-async function loadNotifCount() {
-  const items = await gatherNotifications();
-  const lastSeen = localStorage.getItem("lastSeenNotif") || "1970-01-01";
-  const unread = items.filter(i => new Date(i.time) > new Date(lastSeen)).length;
-  const badge = $("notifBadge");
-  if (!badge) return;
-  if (unread > 0) { badge.textContent = unread > 9 ? "9+" : unread; badge.classList.remove("hide"); }
-  else badge.classList.add("hide");
-}
-
-async function openNotifications() {
-  const items = await gatherNotifications();
-  const html = items.length ? items.map(i =>
-    '<div class="notif-row"><span>' + (i.type === "like" ? "\u2764\uFE0F" : i.type === "comment" ? "\uD83D\uDCAC" : "\u2795") + '</span><span>' + esc(i.text) + '</span><span class="time">' + new Date(i.time).toLocaleDateString() + '</span></div>'
-  ).join("") : '<div class="card">No notifications yet.</div>';
-  $("notifView").innerHTML = '<button class="ghost" onclick="closeNotifications()">\u2190 Back</button><h1 style="margin:10px 0">Notifications</h1>' + html;
-  $("notifView").classList.remove("hide");
-  localStorage.setItem("lastSeenNotif", new Date().toISOString());
-  loadNotifCount();
-}
-
-function closeNotifications() { $("notifView").classList.add("hide"); }
-
 function closeChatThread() {
   clearInterval(chatPollTimer);
   currentChatUser = null;
@@ -920,7 +871,7 @@ let currentStoryIndex = 0;
 async function loadStories() {
   const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const { data } = await db.from("stories")
-    .select("id,image_url,created_at,user_id,profiles!stories_user_id_fkey(id,username,avatar_url)")
+    .select("id,image_url,created_at,user_id,is_video,profiles!stories_user_id_fkey(id,username,avatar_url)")
     .gt("created_at", cutoff).order("created_at", { ascending: true });
   const groups = {};
   (data || []).forEach(s => {
@@ -948,7 +899,7 @@ $("storyFile").onchange = async () => {
   const { error: upErr } = await db.storage.from("stories").upload(path, file);
   if (upErr) { alert(upErr.message); return; }
   const url = db.storage.from("stories").getPublicUrl(path).data.publicUrl;
-  await db.from("stories").insert({ user_id: me.id, image_url: url });
+  await db.from("stories").insert({ user_id: me.id, image_url: url, is_video: file.type.startsWith("video") });
   $("storyFile").value = "";
   loadStories();
 };
@@ -975,7 +926,7 @@ function showStoryFrame() {
     '<div class="sv-top"><b>' + esc(g.user.username) + '</b><span style="opacity:.7;font-size:12px">' + new Date(s.created_at).toLocaleString() + '</span>' +
     (g.user.id === me.id ? '<button class="sv-close" onclick="deleteStory(' + s.id + ')" style="margin-left:auto;font-size:14px">Delete</button>' : "") +
     '<button class="sv-close" onclick="closeStoryViewer()">\u2715</button></div>' +
-    '<img src="' + esc(s.image_url) + '" onclick="nextStoryFrame()">' +
+    (s.is_video ? '<video src="' + esc(s.image_url) + '" controls autoplay onclick="nextStoryFrame()"></video>' : '<img src="' + esc(s.image_url) + '" onclick="nextStoryFrame()">') +
     (g.user.id !== me.id ? '<div class="story-react-row">' + ["\uD83D\uDC4D", "\u2764\uFE0F", "\uD83D\uDE02", "\uD83D\uDE2E"].map(e => '<button onclick="reactStory(' + s.id + ',\'' + e + '\')">' + e + '</button>').join("") + '</div>' : "") +
     (g.user.id === me.id ? '<div class="story-viewers-list" id="storyViewersList">Loading views...</div>' : "");
   document.body.appendChild(overlay);
