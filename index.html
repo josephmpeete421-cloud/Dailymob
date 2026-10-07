@@ -62,6 +62,18 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .dash-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
 .dash-card b{display:block;font-size:26px}
 .dash-card span{color:var(--soft);font-size:13px}
+.notif-row{display:flex;gap:10px;align-items:center;padding:12px 4px;border-bottom:1px solid var(--line)}
+.notif-row.unseen{background:rgba(255,77,109,.08)}
+.notif-row .avatar{width:40px;height:40px}
+.dash-tabs{display:flex;gap:6px;margin:10px 0}
+.trend-up{color:#2bb673}.trend-down{color:var(--acc)}
+.notif-row{display:flex;gap:10px;padding:10px;border-bottom:1px solid var(--line);align-items:center}
+.notif-row .time{margin-left:auto}
+.week-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.week-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.week-card b{font-size:22px}
+.week-up{color:#2e7d32;font-size:12px}
+.week-flat{color:var(--soft);font-size:12px}
 .msg{color:var(--acc);min-height:20px;font-size:14px}
 .hide{display:none}
 .profile{display:flex;align-items:center;gap:12px}
@@ -100,6 +112,14 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 <header>
   <h1>Daily <span>Mob</span></h1>
   <div class="hdr-btns">
+    <span style="position:relative;display:inline-block">
+      <button id="notif" class="icon hide" title="Notifications" onclick="openNotifications()">🔔</button>
+      <span id="notifBadge" class="hide" style="position:absolute;top:-2px;right:-2px;background:var(--acc);color:#fff;border-radius:50%;font-size:10px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 3px">0</span>
+    </span>
+    <span style="position:relative;display:inline-block">
+      <button id="notif" class="icon hide" title="Notifications" onclick="openNotifications()">🔔</button>
+      <span id="notifBadge" class="hide" style="position:absolute;top:-2px;right:-2px;background:var(--acc);color:#fff;border-radius:50%;font-size:10px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 3px">0</span>
+    </span>
     <button id="dash" class="icon hide" title="Dashboard" onclick="openDashboard()">📊</button>
     <span style="position:relative;display:inline-block">
       <button id="msgs" class="icon hide" title="Messages" onclick="openChatList()">💬</button>
@@ -178,6 +198,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 <div id="chatListView" class="profile-view hide"></div>
 <div id="chatThreadView" class="profile-view hide"></div>
 <div id="dashboardView" class="profile-view hide"></div>
+<div id="notifView" class="profile-view hide"></div>
+<div id="notifView" class="profile-view hide"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.js"></script>
 <script>
@@ -256,7 +278,11 @@ async function loadStreak() {
 
 async function toggleFollow(id, following) {
   if (following) { await db.from("follows").delete().eq("follower_id", me.id).eq("following_id", id); myFollowing.delete(id); }
-  else { await db.from("follows").insert({ follower_id: me.id, following_id: id }); myFollowing.add(id); }
+  else {
+    await db.from("follows").insert({ follower_id: me.id, following_id: id });
+    myFollowing.add(id);
+    db.from("notifications").insert({ user_id: id, actor_id: me.id, type: "follow" });
+  }
   loadFeed();
   loadStats();
 }
@@ -270,9 +296,13 @@ async function start(user) {
   $("out").classList.remove("hide");
   $("msgs").classList.remove("hide");
   $("dash").classList.remove("hide");
+  $("notif").classList.remove("hide");
+  loadNotifCount();
   loadUnreadCount();
   clearInterval(unreadPollTimer);
   unreadPollTimer = setInterval(loadUnreadCount, 15000);
+  clearInterval(notifPollTimer);
+  notifPollTimer = setInterval(loadNotifCount, 15000);
   await loadFollowing();
   loadStats();
   loadStreak();
@@ -483,6 +513,10 @@ async function react(id, type) {
   } else {
     await db.from("likes").insert({ post_id: id, user_id: me.id, reaction: type });
     post.likes.push({ user_id: me.id, reaction: type });
+    const ownerId = post.profiles && post.profiles.id;
+    if (ownerId && ownerId !== me.id) {
+      db.from("notifications").insert({ user_id: ownerId, actor_id: me.id, type: "like", post_id: id });
+    }
   }
   const btn = $("reactbtn" + id);
   if (btn) {
@@ -613,6 +647,7 @@ function closeChatList() { $("chatListView").classList.add("hide"); }
 
 let chatPollTimer = null;
 let unreadPollTimer = null;
+let notifPollTimer = null;
 let currentChatUser = null;
 
 async function loadUnreadCount() {
@@ -657,6 +692,7 @@ async function renderChatThread(otherId, otherName, silent) {
     return;
   }
   const WALLPAPERS = [
+    "default",
     "linear-gradient(135deg,#d9fdd3,#aee9c9)",
     "linear-gradient(135deg,#ffe3ec,#ffc2d4)",
     "linear-gradient(135deg,#e0ecff,#c7d8ff)",
@@ -667,7 +703,10 @@ async function renderChatThread(otherId, otherName, silent) {
   $("chatThreadView").innerHTML =
     '<button class="ghost" onclick="closeChatThread()">\u2190 Back</button>' +
     '<h1 style="margin:10px 0">' + esc(otherName) + ' <button class="ghost" onclick="toggleWallpaperPicker()" style="font-size:16px">\uD83C\uDFA8</button></h1>' +
-    '<div class="wallpaper-row hide" id="wallpaperRow">' + WALLPAPERS.map(c => '<div class="wallpaper-swatch" style="background:' + c + '" onclick="setChatWallpaper(\'' + otherId + '\',\'' + c + '\')"></div>').join("") + '</div>' +
+    '<div class="wallpaper-row hide" id="wallpaperRow">' + WALLPAPERS.map(c => c === "default"
+      ? '<div class="wallpaper-swatch" style="background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:12px" onclick="setChatWallpaper(\'' + otherId + '\',\'default\')">\u21BB</div>'
+      : '<div class="wallpaper-swatch" style="background:' + c + '" onclick="setChatWallpaper(\'' + otherId + '\',\'' + c + '\')"></div>'
+    ).join("") + '</div>' +
     '<div class="chat-thread-msgs" id="chatThreadMsgs">' + msgsHtml + '</div>' +
     '<div class="cm-row"><input id="chatInput" placeholder="Type a message"><button class="ghost" onclick="sendChatMessage(\'' + otherId + '\',\'' + esc(otherName) + '\')">\u27A4</button></div>';
   const box = $("chatThreadMsgs");
@@ -691,11 +730,46 @@ function toggleWallpaperPicker() {
 }
 
 function setChatWallpaper(otherId, color) {
-  localStorage.setItem("chatbg-" + otherId, color);
   const box = $("chatThreadMsgs");
-  if (box) box.style.background = color;
+  if (color === "default") {
+    localStorage.removeItem("chatbg-" + otherId);
+    if (box) box.style.background = "";
+  } else {
+    localStorage.setItem("chatbg-" + otherId, color);
+    if (box) box.style.background = color;
+  }
   toggleWallpaperPicker();
 }
+
+async function loadNotifCount() {
+  const { count } = await db.from("notifications").select("id", { count: "exact", head: true }).eq("user_id", me.id).eq("seen", false);
+  const badge = $("notifBadge");
+  if (!badge) return;
+  if (count && count > 0) { badge.textContent = count > 9 ? "9+" : count; badge.classList.remove("hide"); }
+  else badge.classList.add("hide");
+}
+
+async function openNotifications() {
+  const { data } = await db.from("notifications")
+    .select("id,type,created_at,seen,actor:profiles!notifications_actor_id_fkey(username,avatar_url)")
+    .eq("user_id", me.id).order("created_at", { ascending: false }).limit(50);
+  const verbs = { like: "reacted to your post", comment: "commented on your post", follow: "started following you" };
+  const html = (data && data.length) ? data.map(n => {
+    const av = (n.actor && n.actor.avatar_url) || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(n.actor && n.actor.username || "U");
+    return '<div class="notif-row ' + (n.seen ? "" : "unseen") + '">' +
+      '<img class="avatar" src="' + esc(av) + '">' +
+      '<div><b>' + esc(n.actor && n.actor.username) + '</b> ' + (verbs[n.type] || "did something") + '<div class="time">' + new Date(n.created_at).toLocaleString() + '</div></div>' +
+      '</div>';
+  }).join("") : '<div class="card">No notifications yet.</div>';
+  $("notifView").innerHTML =
+    '<button class="ghost" onclick="closeNotifications()">\u2190 Back</button>' +
+    '<h1 style="margin:10px 0">Notifications</h1>' + html;
+  $("notifView").classList.remove("hide");
+  await db.from("notifications").update({ seen: true }).eq("user_id", me.id).eq("seen", false);
+  loadNotifCount();
+}
+
+function closeNotifications() { $("notifView").classList.add("hide"); }
 
 async function openDashboard() {
   const [{ count: postsCount }, { count: followersCount }, { count: followingCount }, { data: myPosts }, { count: storiesCount }] = await Promise.all([
@@ -723,11 +797,103 @@ async function openDashboard() {
   $("dashboardView").innerHTML =
     '<button class="ghost" onclick="closeDashboard()">\u2190 Back</button>' +
     '<h1 style="margin:10px 0">Your Dashboard</h1>' +
-    '<div class="dash-grid">' + cards.map(c => '<div class="dash-card"><b>' + c[0] + '</b><span>' + c[1] + '</span></div>').join("") + '</div>';
+    '<div class="dash-tabs"><button class="tab active" id="dtHome" onclick="setDashTab(\'home\')">Home</button><button class="tab" id="dtAnalytics" onclick="setDashTab(\'analytics\')">Analytics</button></div>' +
+    '<div id="dashHome"><div class="dash-grid">' + cards.map(c => '<div class="dash-card"><b>' + c[0] + '</b><span>' + c[1] + '</span></div>').join("") + '</div></div>' +
+    '<div id="dashAnalytics" class="hide"><div class="card">Loading...</div></div>';
   $("dashboardView").classList.remove("hide");
 }
 
+function setDashTab(tab) {
+  $("dtHome").classList.toggle("active", tab === "home");
+  $("dtAnalytics").classList.toggle("active", tab === "analytics");
+  $("dashHome").classList.toggle("hide", tab !== "home");
+  $("dashAnalytics").classList.toggle("hide", tab !== "analytics");
+  if (tab === "analytics") loadWeeklyAnalytics();
+}
+
+function trendLabel(curr, prev) {
+  if (!prev) return curr > 0 ? '<span class="trend-up">New</span>' : "--";
+  const pct = Math.round(((curr - prev) / prev) * 100);
+  return '<span class="' + (pct >= 0 ? "trend-up" : "trend-down") + '">' + (pct >= 0 ? "+" : "") + pct + '%</span>';
+}
+
+async function loadWeeklyAnalytics() {
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  const twoWeeksAgo = new Date(Date.now() - 14 * 86400000).toISOString();
+  const { data: myPosts } = await db.from("posts").select("id").eq("user_id", me.id);
+  const ids = (myPosts || []).map(p => p.id);
+  const [postsThisQ, postsPrevQ, folThisQ, folPrevQ] = await Promise.all([
+    db.from("posts").select("id", { count: "exact", head: true }).eq("user_id", me.id).gte("created_at", weekAgo),
+    db.from("posts").select("id", { count: "exact", head: true }).eq("user_id", me.id).gte("created_at", twoWeeksAgo).lt("created_at", weekAgo),
+    db.from("follows").select("follower_id", { count: "exact", head: true }).eq("following_id", me.id).gte("created_at", weekAgo),
+    db.from("follows").select("follower_id", { count: "exact", head: true }).eq("following_id", me.id).gte("created_at", twoWeeksAgo).lt("created_at", weekAgo)
+  ]);
+  let reactT = 0, reactP = 0, commT = 0, commP = 0;
+  if (ids.length) {
+    const [rT, rP, cT, cP] = await Promise.all([
+      db.from("likes").select("post_id", { count: "exact", head: true }).in("post_id", ids).gte("created_at", weekAgo),
+      db.from("likes").select("post_id", { count: "exact", head: true }).in("post_id", ids).gte("created_at", twoWeeksAgo).lt("created_at", weekAgo),
+      db.from("comments").select("post_id", { count: "exact", head: true }).in("post_id", ids).gte("created_at", weekAgo),
+      db.from("comments").select("post_id", { count: "exact", head: true }).in("post_id", ids).gte("created_at", twoWeeksAgo).lt("created_at", weekAgo)
+    ]);
+    reactT = rT.count || 0; reactP = rP.count || 0; commT = cT.count || 0; commP = cP.count || 0;
+  }
+  const rows = [
+    ["New posts", postsThisQ.count || 0, postsPrevQ.count || 0],
+    ["New followers", folThisQ.count || 0, folPrevQ.count || 0],
+    ["Reactions received", reactT, reactP],
+    ["Comments received", commT, commP]
+  ];
+  $("dashAnalytics").innerHTML = '<p class="msg" style="color:var(--soft)">This week vs the previous 7 days</p>' +
+    rows.map(r => '<div class="dash-card" style="margin-bottom:10px"><b>' + r[1] + '</b> ' + trendLabel(r[1], r[2]) + '<span>' + r[0] + '</span></div>').join("");
+}
+
 function closeDashboard() { $("dashboardView").classList.add("hide"); }
+
+async function gatherNotifications() {
+  const { data: myPosts } = await db.from("posts").select("id,content").eq("user_id", me.id);
+  const ids = (myPosts || []).map(p => p.id);
+  const idMap = {}; (myPosts || []).forEach(p => idMap[p.id] = p.content);
+  let likeRows = [], commentRows = [], followRows = [];
+  if (ids.length) {
+    const [{ data: lr }, { data: cr }] = await Promise.all([
+      db.from("likes").select("post_id,user_id,created_at,reaction,profiles!likes_user_id_fkey(username)").in("post_id", ids).neq("user_id", me.id).order("created_at", { ascending: false }).limit(30),
+      db.from("comments").select("post_id,user_id,created_at,profiles!comments_user_id_fkey(username)").in("post_id", ids).neq("user_id", me.id).order("created_at", { ascending: false }).limit(30)
+    ]);
+    likeRows = lr || []; commentRows = cr || [];
+  }
+  const { data: fr } = await db.from("follows").select("follower_id,created_at,profiles!follows_follower_id_fkey(username)").eq("following_id", me.id).order("created_at", { ascending: false }).limit(30);
+  followRows = fr || [];
+  const items = [];
+  likeRows.forEach(r => items.push({ type: "like", time: r.created_at, text: (r.profiles && r.profiles.username || "Someone") + " reacted " + (r.reaction || "\uD83D\uDC4D") + " to your post" }));
+  commentRows.forEach(r => items.push({ type: "comment", time: r.created_at, text: (r.profiles && r.profiles.username || "Someone") + " commented on your post" }));
+  followRows.forEach(r => items.push({ type: "follow", time: r.created_at, text: (r.profiles && r.profiles.username || "Someone") + " started following you" }));
+  items.sort((a, b) => new Date(b.time) - new Date(a.time));
+  return items;
+}
+
+async function loadNotifCount() {
+  const items = await gatherNotifications();
+  const lastSeen = localStorage.getItem("lastSeenNotif") || "1970-01-01";
+  const unread = items.filter(i => new Date(i.time) > new Date(lastSeen)).length;
+  const badge = $("notifBadge");
+  if (!badge) return;
+  if (unread > 0) { badge.textContent = unread > 9 ? "9+" : unread; badge.classList.remove("hide"); }
+  else badge.classList.add("hide");
+}
+
+async function openNotifications() {
+  const items = await gatherNotifications();
+  const html = items.length ? items.map(i =>
+    '<div class="notif-row"><span>' + (i.type === "like" ? "\u2764\uFE0F" : i.type === "comment" ? "\uD83D\uDCAC" : "\u2795") + '</span><span>' + esc(i.text) + '</span><span class="time">' + new Date(i.time).toLocaleDateString() + '</span></div>'
+  ).join("") : '<div class="card">No notifications yet.</div>';
+  $("notifView").innerHTML = '<button class="ghost" onclick="closeNotifications()">\u2190 Back</button><h1 style="margin:10px 0">Notifications</h1>' + html;
+  $("notifView").classList.remove("hide");
+  localStorage.setItem("lastSeenNotif", new Date().toISOString());
+  loadNotifCount();
+}
+
+function closeNotifications() { $("notifView").classList.add("hide"); }
 
 function closeChatThread() {
   clearInterval(chatPollTimer);
@@ -739,6 +905,11 @@ async function addComment(id) {
   const box = $("c" + id), content = box.value.trim();
   if (!content) return;
   await db.from("comments").insert({ post_id: id, user_id: me.id, content });
+  const post = lastFeedData.find(p => p.id === id);
+  const ownerId = post && post.profiles && post.profiles.id;
+  if (ownerId && ownerId !== me.id) {
+    db.from("notifications").insert({ user_id: ownerId, actor_id: me.id, type: "comment", post_id: id });
+  }
   loadFeed();
 }
 
