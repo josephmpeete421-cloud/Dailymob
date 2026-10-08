@@ -67,6 +67,32 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .notif-row .avatar{width:40px;height:40px}
 .dash-tabs{display:flex;gap:6px;margin:10px 0}
 .trend-up{color:#2bb673}.trend-down{color:var(--acc)}
+.settings-section{margin-bottom:18px}
+.settings-section h3{font-size:14px;color:var(--soft);text-transform:uppercase;letter-spacing:.5px;margin:0 0 8px 4px}
+.settings-row{display:flex;align-items:center;justify-content:space-between;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:8px}
+.switch{position:relative;width:46px;height:26px;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0}
+.switch .slider{position:absolute;inset:0;background:var(--line);border-radius:999px;cursor:pointer;transition:.2s}
+.switch .slider:before{content:"";position:absolute;width:20px;height:20px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+.switch input:checked+.slider{background:var(--acc)}
+.switch input:checked+.slider:before{transform:translateX(20px)}
+.danger-btn{color:var(--acc);border:1px solid var(--acc)}
+.blocked-row{display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid var(--line)}
+.blocked-row .avatar{width:34px;height:34px}
+.locked-note{text-align:center;color:var(--soft);padding:30px 16px}
+.back-top{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);border-radius:999px;padding:9px 18px;font-weight:600;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.3);z-index:30;display:flex;align-items:center;gap:6px}
+.reel-wrap{position:relative}
+.reel-overlay{position:absolute;right:8px;bottom:10px;display:flex;flex-direction:column;align-items:center;gap:16px}
+.reel-overlay button{background:rgba(0,0,0,.45);color:#fff;border-radius:50%;width:44px;height:44px;font-size:20px;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:0}
+.reel-overlay span{color:#fff;font-size:11px;margin-top:2px;text-shadow:0 1px 2px rgba(0,0,0,.6)}
+.reels-view{position:fixed;inset:0;background:#000;z-index:70;overflow-y:scroll;scroll-snap-type:y mandatory}
+.reel-page{height:100vh;height:100dvh;scroll-snap-align:start;position:relative;display:flex;align-items:center;justify-content:center;background:#000}
+.reel-page video{width:100%;height:100%;object-fit:contain}
+.reel-page .reel-overlay{right:12px;bottom:90px}
+.reel-caption{position:absolute;left:14px;right:70px;bottom:30px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.7)}
+.reel-top{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;padding:14px;z-index:5}
+.reel-top button{background:rgba(0,0,0,.4);color:#fff;border-radius:50%;width:36px;height:36px}
+.reel-mute{position:absolute;top:14px;right:14px;background:rgba(0,0,0,.4);color:#fff;border-radius:50%;width:36px;height:36px}
 .notif-row{display:flex;gap:10px;padding:10px;border-bottom:1px solid var(--line);align-items:center}
 .notif-row .time{margin-left:auto}
 .week-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
@@ -116,6 +142,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
       <button id="notif" class="icon hide" title="Notifications" onclick="openNotifications()">🔔</button>
       <span id="notifBadge" class="hide" style="position:absolute;top:-2px;right:-2px;background:var(--acc);color:#fff;border-radius:50%;font-size:10px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 3px">0</span>
     </span>
+    <button id="reelsBtn" class="icon hide" title="Reels" onclick="openReels()">🎬</button>
     <button id="dash" class="icon hide" title="Dashboard" onclick="openDashboard()">📊</button>
     <span style="position:relative;display:inline-block">
       <button id="msgs" class="icon hide" title="Messages" onclick="openChatList()">💬</button>
@@ -188,6 +215,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
     <button class="tab" id="tabNear" onclick="setFeedMode('nearby')">Nearby</button>
   </div>
   <div id="feed"></div>
+  <button id="backTop" class="back-top hide" onclick="scrollToTopAndRefresh()">↑ Back to top</button>
 </section>
 </main>
 <div id="profileView" class="profile-view hide"></div>
@@ -195,7 +223,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 <div id="chatThreadView" class="profile-view hide"></div>
 <div id="dashboardView" class="profile-view hide"></div>
 <div id="notifView" class="profile-view hide"></div>
-<div id="notifView" class="profile-view hide"></div>
+<div id="reelsView" class="reels-view hide"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.js"></script>
 <script>
@@ -292,6 +320,7 @@ async function start(user) {
   $("out").classList.remove("hide");
   $("msgs").classList.remove("hide");
   $("dash").classList.remove("hide");
+  $("reelsBtn").classList.remove("hide");
   $("notif").classList.remove("hide");
   loadNotifCount();
   loadUnreadCount();
@@ -471,23 +500,30 @@ function renderFeed() {
       '<div class="react-picker hide" id="picker' + p.id + '">' + pickerBtns + '</div>';
     return '<div class="card">' +
       '<div class="profile" style="margin-bottom:8px">' +
-      '<img class="avatar" style="width:34px;height:34px" src="' + esc(av) + '">' +
+      '<img class="avatar" style="width:34px;height:34px;cursor:pointer" src="' + esc(av) + '" onclick="openProfile(\'' + (p.profiles && p.profiles.id) + '\')">' +
       '<span class="who" onclick="openProfile(\'' + (p.profiles && p.profiles.id) + '\')">' + esc(p.profiles && p.profiles.username) + '</span>' +
       '<span class="time">' + new Date(p.created_at).toLocaleString() + '</span>' +
       (p.profiles && p.profiles.id !== me.id ? '<button class="ghost" style="margin-left:auto" onclick="toggleFollow(\'' + p.profiles.id + '\',' + myFollowing.has(p.profiles.id) + ')">' + (myFollowing.has(p.profiles.id) ? "Following" : "Follow") + '</button>' : '') +
       '</div>' +
       '<div class="post-media-wrap" ondblclick="doubleTapLike(' + p.id + ',this)">' +
       '<div>' + highlightContent(p.content || "") + '</div>' +
-      (p.image_url ? (p.is_video ? '<video class="post-img" src="' + esc(p.image_url) + '" controls></video>' : '<img class="post-img" src="' + esc(p.image_url) + '">') : "") +
+      (p.image_url ? (p.is_video
+        ? '<div class="reel-wrap"><video class="post-img" style="max-height:480px" src="' + esc(p.image_url) + '" controls></video>' +
+          '<div class="reel-overlay">' +
+          '<button id="reactbtn' + p.id + '" class="' + (mine ? "liked" : "") + '" onclick="mainReact(' + p.id + ')" ontouchstart="startHold(' + p.id + ')" ontouchend="endHold()" onmousedown="startHold(' + p.id + ')" onmouseup="endHold()">' + (mineType || "\uD83D\uDC4D") + '<span>' + total + '</span></button>' +
+          '<button onclick="toggleComments(' + p.id + ')">\uD83D\uDCAC<span>' + p.comments.length + '</span></button>' +
+          '<button onclick="sharePost(' + p.id + ')">\u27A4<span>Share</span></button>' +
+          '</div><div class="react-picker hide" id="picker' + p.id + '" style="bottom:140px;right:60px">' + pickerBtns + '</div></div>'
+        : '<img class="post-img" src="' + esc(p.image_url) + '">') : "") +
       '</div>' +
       (p.profiles && p.profiles.id === me.id ? '<div class="acts"><button class="ghost" onclick="editPost(' + p.id + ')">Edit</button><button class="ghost" onclick="deletePost(' + p.id + ')">Delete</button></div>' : "") +
-      '<div class="acts reactions">' + reactRow +
-      '<button class="ghost" onclick="sharePost(' + p.id + ')">Share</button></div>' +
-      (p.comments.length ? '<div class="comments-toggle" onclick="toggleComments(' + p.id + ')" id="ctoggle' + p.id + '">View ' + p.comments.length + ' comment' + (p.comments.length > 1 ? "s" : "") + '</div>' : "") +
+      (p.is_video ? "" : '<div class="acts reactions">' + reactRow +
+      '<button class="ghost" onclick="sharePost(' + p.id + ')">Share</button></div>') +
+      (!p.is_video && p.comments.length ? '<div class="comments-toggle" onclick="toggleComments(' + p.id + ')" id="ctoggle' + p.id + '">View ' + p.comments.length + ' comment' + (p.comments.length > 1 ? "s" : "") + '</div>' : "") +
       '<div class="hide" id="clist' + p.id + '">' +
       p.comments.map(c => {
         const cav = (c.profiles && c.profiles.avatar_url) || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(c.profiles && c.profiles.username || "U");
-        return '<div class="cm"><img class="cm-av" src="' + esc(cav) + '"><div class="cm-bubble"><span class="cm-who who" onclick="openProfile(\'' + (c.profiles && c.profiles.id) + '\')">' + esc(c.profiles && c.profiles.username) + '</span>' + esc(c.content) + '</div></div>';
+        return '<div class="cm"><img class="cm-av" style="cursor:pointer" src="' + esc(cav) + '" onclick="openProfile(\'' + (c.profiles && c.profiles.id) + '\')"><div class="cm-bubble"><span class="cm-who who" onclick="openProfile(\'' + (c.profiles && c.profiles.id) + '\')">' + esc(c.profiles && c.profiles.username) + '</span>' + esc(c.content) + '</div></div>';
       }).join("") +
       '</div>' +
       '<div class="cm-row"><img class="cm-av" src="' + esc(myProfile.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(myProfile.username)) + '"><input id="c' + p.id + '" placeholder="Write a comment"><button class="ghost" onclick="addComment(' + p.id + ')">\u27A4</button></div>' +
@@ -968,6 +1004,19 @@ function sharePost(id) {
   const link = location.href.split("#")[0] + "#post-" + id;
   if (navigator.share) navigator.share({ title: "Daily Mob", url: link });
   else { navigator.clipboard.writeText(link); alert("Link copied."); }
+}
+
+window.addEventListener("scroll", () => {
+  const btn = $("backTop");
+  if (!btn) return;
+  if (window.scrollY > 400) btn.classList.remove("hide");
+  else btn.classList.add("hide");
+});
+
+function scrollToTopAndRefresh() {
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  loadFeed();
+  $("backTop").classList.add("hide");
 }
 
 db.auth.getSession().then(({ data }) => { if (data.session) start(data.session.user); });
