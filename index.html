@@ -171,7 +171,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
         <div class="pname" id="pname"></div>
         <div class="pbio" id="pbio"></div>
       </div>
-      <button class="ghost" id="editProfile">Edit</button>
+      <button class="ghost" id="editProfile" onclick="openSettings()">Edit</button>
     </div>
     <div class="stats">
       <div class="stat"><b id="statPosts">0</b><span>Posts</span></div>
@@ -180,15 +180,16 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
       <div class="stat"><b id="statLikes">0</b><span>Likes</span></div>
       <div class="stat"><b id="statStreak">0</b><span>🔥 Streak</span></div>
     </div>
-    <div id="editBox" class="hide">
+    <div id="editBox" class="hide" style="display:none">
       <input id="avatarFile" type="file" accept="image/*">
       <input id="unameInput" placeholder="Username">
       <input id="cityInput" placeholder="Your city (for the Nearby feed)">
       <textarea id="bioInput" rows="2" placeholder="Write a short bio"></textarea>
       <button id="saveProfile">Save</button>
       <span class="msg" id="profmsg"></span>
+      <label class="settings-row" style="margin-top:14px"><span>🔒 Private account</span><span class="switch"><input id="privateToggle" type="checkbox"><span class="slider"></span></span></label>
       <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px">
-        <button id="deleteAccount" class="ghost" style="color:var(--acc)">Delete my account</button>
+        <button id="deleteAccount" class="ghost danger-btn">Delete my account</button>
       </div>
     </div>
   </div>
@@ -224,6 +225,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 <div id="dashboardView" class="profile-view hide"></div>
 <div id="notifView" class="profile-view hide"></div>
 <div id="reelsView" class="reels-view hide"></div>
+<div id="settingsView" class="profile-view hide"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.js"></script>
 <script>
@@ -329,13 +331,12 @@ async function start(user) {
   clearInterval(notifPollTimer);
   notifPollTimer = setInterval(loadNotifCount, 15000);
   await loadFollowing();
+  await loadBlocked();
   loadStats();
   loadStreak();
   loadFeed();
   loadStories();
 }
-
-$("editProfile").onclick = () => $("editBox").classList.toggle("hide");
 
 $("deleteAccount").onclick = async () => {
   if (!confirm("This permanently deletes your profile, posts, likes, comments and follows. This cannot be undone. Continue?")) return;
@@ -363,12 +364,13 @@ $("saveProfile").onclick = async () => {
   const username = $("unameInput").value.trim();
   const city = $("cityInput").value.trim();
   if (username.length < 3) { $("profmsg").textContent = "Username needs 3+ characters."; return; }
-  const { data, error } = await db.from("profiles").update({ bio, username, avatar_url, city }).eq("id", me.id).select().single();
+  const privateAcc = $("privateToggle") ? $("privateToggle").checked : myProfile.private;
+  const { data, error } = await db.from("profiles").update({ bio, username, avatar_url, city, private: privateAcc }).eq("id", me.id).select().single();
   if (error) { $("profmsg").textContent = error.message; return; }
   myProfile = data;
   renderProfile();
   $("profmsg").textContent = "Saved.";
-  $("editBox").classList.add("hide");
+  closeSettings();
 };
 
 $("signup").onclick = async () => {
@@ -449,10 +451,16 @@ function setFeedMode(mode) {
 
 async function loadFeed() {
   const { data, error } = await db.from("posts")
-    .select("id,content,created_at,image_url,is_video,profiles!posts_user_id_fkey(id,username,avatar_url,city),likes(user_id,reaction),comments(id,content,profiles!comments_user_id_fkey(id,username,avatar_url))")
+    .select("id,content,created_at,image_url,is_video,profiles!posts_user_id_fkey(id,username,avatar_url,city,private),likes(user_id,reaction),comments(id,content,profiles!comments_user_id_fkey(id,username,avatar_url))")
     .order("created_at", { ascending: false }).limit(50);
   if (error) { $("feed").innerHTML = '<div class="card msg">' + esc(error.message) + '</div>'; return; }
-  lastFeedData = data;
+  lastFeedData = (data || []).filter(p => {
+    const owner = p.profiles;
+    if (!owner) return true;
+    if (myBlocked.has(owner.id)) return false;
+    if (owner.private && owner.id !== me.id && !myFollowing.has(owner.id)) return false;
+    return true;
+  });
   renderFeed();
 }
 
@@ -625,28 +633,33 @@ async function openProfile(userId) {
   if (!userId) return;
   const { data: prof } = await db.from("profiles").select("*").eq("id", userId).maybeSingle();
   if (!prof) return;
-  const { data: posts } = await db.from("posts").select("id,content,created_at,image_url,is_video").eq("user_id", userId).order("created_at", { ascending: false });
+  const isMe = userId === me.id;
+  const isBlocked = myBlocked.has(userId);
+  const locked = prof.private && !isMe && !myFollowing.has(userId);
+  const posts = locked ? [] : (await db.from("posts").select("id,content,created_at,image_url,is_video").eq("user_id", userId).order("created_at", { ascending: false })).data;
   const [{ count: followersCount }, { count: followingCount }] = await Promise.all([
     db.from("follows").select("follower_id", { count: "exact", head: true }).eq("following_id", userId),
     db.from("follows").select("following_id", { count: "exact", head: true }).eq("follower_id", userId)
   ]);
   const av = prof.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(prof.username);
-  const isMe = userId === me.id;
-  const postsHtml = (posts || []).map(p =>
-    '<div class="card">' +
-    '<div class="time">' + new Date(p.created_at).toLocaleString() + '</div>' +
-    '<div>' + highlightContent(p.content || "") + '</div>' +
-    (p.image_url ? (p.is_video ? '<video class="post-img" src="' + esc(p.image_url) + '" controls></video>' : '<img class="post-img" src="' + esc(p.image_url) + '">') : "") +
-    (isMe ? '<div class="acts"><button class="ghost" onclick="editPost(' + p.id + ');openProfile(\'' + userId + '\')">Edit</button><button class="ghost" onclick="deletePost(' + p.id + ');closeProfileView()">Delete</button></div>' : "") +
-    '</div>'
-  ).join("") || '<div class="card">No posts yet.</div>';
+  const postsHtml = locked
+    ? '<div class="locked-note">\uD83D\uDD12 This account is private. Follow to see their posts.</div>'
+    : (posts || []).map(p =>
+      '<div class="card">' +
+      '<div class="time">' + new Date(p.created_at).toLocaleString() + '</div>' +
+      '<div>' + highlightContent(p.content || "") + '</div>' +
+      (p.image_url ? (p.is_video ? '<video class="post-img" src="' + esc(p.image_url) + '" controls></video>' : '<img class="post-img" src="' + esc(p.image_url) + '">') : "") +
+      (isMe ? '<div class="acts"><button class="ghost" onclick="editPost(' + p.id + ');openProfile(\'' + userId + '\')">Edit</button><button class="ghost" onclick="deletePost(' + p.id + ');closeProfileView()">Delete</button></div>' : "") +
+      '</div>'
+    ).join("") || '<div class="card">No posts yet.</div>';
   $("profileView").innerHTML =
     '<button class="ghost" onclick="closeProfileView()">\u2190 Back</button>' +
     '<div class="card"><div class="profile">' +
     '<img class="avatar" src="' + esc(av) + '">' +
-    '<div class="pinfo"><div class="pname">' + esc(prof.username) + '</div><div class="pbio">' + esc(prof.bio || "No bio yet.") + '</div></div>' +
+    '<div class="pinfo"><div class="pname">' + esc(prof.username) + (prof.private ? " \uD83D\uDD12" : "") + '</div><div class="pbio">' + esc(prof.bio || "No bio yet.") + '</div></div>' +
     (!isMe ? '<button class="ghost" onclick="toggleFollow(\'' + userId + '\',' + myFollowing.has(userId) + ');openProfile(\'' + userId + '\')">' + (myFollowing.has(userId) ? "Following" : "Follow") + '</button>' : "") +
     (!isMe ? '<button class="ghost" onclick="openChatThread(\'' + userId + '\',\'' + esc(prof.username) + '\')">Message</button>' : "") +
+    (!isMe ? '<button class="ghost danger-btn" onclick="toggleBlock(\'' + userId + '\',' + isBlocked + ');openProfile(\'' + userId + '\')">' + (isBlocked ? "Unblock" : "Block") + '</button>' : "") +
     '</div><div class="stats"><div class="stat"><b>' + (posts ? posts.length : 0) + '</b><span>Posts</span></div><div class="stat"><b>' + (followersCount || 0) + '</b><span>Followers</span></div><div class="stat"><b>' + (followingCount || 0) + '</b><span>Following</span></div></div></div>' +
     postsHtml;
   $("profileView").classList.remove("hide");
@@ -806,6 +819,51 @@ async function openNotifications() {
 }
 
 function closeNotifications() { $("notifView").classList.add("hide"); }
+
+let settingsBuilt = false;
+let myBlocked = new Set();
+
+async function loadBlocked() {
+  const { data } = await db.from("blocks").select("blocked_id").eq("blocker_id", me.id);
+  myBlocked = new Set((data || []).map(r => r.blocked_id));
+}
+
+async function toggleBlock(userId, isBlocked) {
+  if (isBlocked) { await db.from("blocks").delete().eq("blocker_id", me.id).eq("blocked_id", userId); myBlocked.delete(userId); }
+  else { await db.from("blocks").insert({ blocker_id: me.id, blocked_id: userId }); myBlocked.add(userId); }
+  loadFeed();
+}
+
+async function renderBlockedList() {
+  const ids = Array.from(myBlocked);
+  const box = $("blockedListBox");
+  if (!box) return;
+  if (!ids.length) { box.innerHTML = '<div class="msg" style="color:var(--soft)">No blocked accounts.</div>'; return; }
+  const { data } = await db.from("profiles").select("id,username,avatar_url").in("id", ids);
+  box.innerHTML = (data || []).map(p => {
+    const av = p.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(p.username);
+    return '<div class="blocked-row"><img class="avatar" src="' + esc(av) + '"><span style="flex:1">' + esc(p.username) + '</span><button class="ghost" onclick="toggleBlock(\'' + p.id + '\',true);renderBlockedList()">Unblock</button></div>';
+  }).join("");
+}
+
+async function openSettings() {
+  $("privateToggle").checked = !!myProfile.private;
+  if (!settingsBuilt) {
+    $("settingsView").innerHTML =
+      '<button class="ghost" onclick="closeSettings()">\u2190 Back</button>' +
+      '<h1 style="margin:10px 0">Settings</h1>' +
+      '<div class="settings-section"><h3>Profile</h3><div id="profileFormSlot"></div></div>' +
+      '<div class="settings-section"><h3>Blocked accounts</h3><div id="blockedListBox" class="card">Loading...</div></div>';
+    $("profileFormSlot").appendChild($("editBox"));
+    $("editBox").style.display = "block";
+    $("editBox").classList.remove("hide");
+    settingsBuilt = true;
+  }
+  await renderBlockedList();
+  $("settingsView").classList.remove("hide");
+}
+
+function closeSettings() { $("settingsView").classList.add("hide"); }
 
 async function openDashboard() {
   const [{ count: postsCount }, { count: followersCount }, { count: followingCount }, { data: myPosts }, { count: storiesCount }] = await Promise.all([
