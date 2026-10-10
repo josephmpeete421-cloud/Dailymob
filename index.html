@@ -531,8 +531,12 @@ function renderFeed() {
   }).join("");
 }
 
+function findPostAnywhere(id) {
+  return lastFeedData.find(p => p.id === id) || reelsData.find(p => p.id === id);
+}
+
 async function react(id, type) {
-  const post = lastFeedData.find(p => p.id === id);
+  const post = findPostAnywhere(id);
   if (!post) return;
   const mine = post.likes.find(l => l.user_id === me.id);
   const mineType = mine ? (mine.reaction || "\uD83D\uDC4D") : null;
@@ -574,7 +578,7 @@ function openPicker(id) {
 
 function mainReact(id) {
   if (heldLong) { heldLong = false; return; }
-  const post = lastFeedData.find(p => p.id === id);
+  const post = findPostAnywhere(id);
   const mine = post && post.likes.find(l => l.user_id === me.id);
   react(id, mine ? (mine.reaction || "\uD83D\uDC4D") : "\uD83D\uDC4D");
 }
@@ -881,6 +885,67 @@ async function loadWeeklyAnalytics() {
 }
 
 function closeDashboard() { $("dashboardView").classList.add("hide"); }
+
+let reelsObserver = null;
+let reelsData = [];
+
+async function openReels() {
+  const { data } = await db.from("posts")
+    .select("id,content,image_url,profiles!posts_user_id_fkey(id,username,avatar_url),likes(user_id,reaction),comments(id)")
+    .eq("is_video", true).order("created_at", { ascending: false }).limit(30);
+  const list = data || [];
+  if (!list.length) {
+    $("reelsView").innerHTML = '<div class="reel-top"><button onclick="closeReels()">\u2715</button></div><div class="locked-note" style="color:#fff;padding-top:40vh">No videos yet.</div>';
+    $("reelsView").classList.remove("hide");
+    return;
+  }
+  const EMOJIS = ["\uD83D\uDC4D", "\u2764\uFE0F", "\uD83D\uDE02", "\uD83D\uDE2E"];
+  $("reelsView").innerHTML = '<div class="reel-top"><button onclick="closeReels()">\u2715</button></div>' +
+    list.map((p, i) => {
+      const mine = p.likes.find(l => l.user_id === me.id);
+      const mineType = mine ? (mine.reaction || "\uD83D\uDC4D") : null;
+      const av = (p.profiles && p.profiles.avatar_url) || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(p.profiles && p.profiles.username || "U");
+      const pickerBtns = EMOJIS.map(e => '<button onclick="pickReact(' + p.id + ',\'' + e + '\')">' + e + '</button>').join("");
+      return '<div class="reel-page">' +
+        '<video src="' + esc(p.image_url) + '" loop playsinline muted data-id="' + p.id + '"></video>' +
+        '<button class="reel-mute" onclick="toggleReelMute(this)">\uD83D\uDD07</button>' +
+        '<div class="reel-caption"><div class="who" onclick="openProfile(\'' + (p.profiles && p.profiles.id) + '\')"><img class="avatar" style="width:28px;height:28px;vertical-align:middle;margin-right:6px" src="' + esc(av) + '">' + esc(p.profiles && p.profiles.username) + '</div><div>' + highlightContent(p.content || "") + '</div></div>' +
+        '<div class="reel-overlay">' +
+        '<button id="reactbtn' + p.id + '" class="' + (mine ? "liked" : "") + '" onclick="mainReact(' + p.id + ')" ontouchstart="startHold(' + p.id + ')" ontouchend="endHold()" onmousedown="startHold(' + p.id + ')" onmouseup="endHold()">' + (mineType || "\uD83D\uDC4D") + '<span>' + p.likes.length + '</span></button>' +
+        '<button onclick="sharePost(' + p.id + ')">\u27A4<span>Share</span></button>' +
+        '</div><div class="react-picker hide" id="picker' + p.id + '" style="bottom:160px;right:60px">' + pickerBtns + '</div>' +
+        '</div>';
+    }).join("");
+  $("reelsView").classList.remove("hide");
+  reelsData = list;
+  setupReelsAutoplay();
+}
+
+function toggleReelMute(btn) {
+  const video = btn.parentElement.querySelector("video");
+  video.muted = !video.muted;
+  btn.textContent = video.muted ? "\uD83D\uDD07" : "\uD83D\uDD0A";
+}
+
+function setupReelsAutoplay() {
+  if (reelsObserver) reelsObserver.disconnect();
+  const videos = document.querySelectorAll("#reelsView video");
+  reelsObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) entry.target.play().catch(() => {});
+      else entry.target.pause();
+    });
+  }, { threshold: 0.6 });
+  videos.forEach(v => reelsObserver.observe(v));
+  if (videos[0]) videos[0].play().catch(() => {});
+}
+
+function closeReels() {
+  if (reelsObserver) reelsObserver.disconnect();
+  document.querySelectorAll("#reelsView video").forEach(v => v.pause());
+  $("reelsView").classList.add("hide");
+  $("reelsView").innerHTML = "";
+}
 
 function closeChatThread() {
   clearInterval(chatPollTimer);
