@@ -86,6 +86,14 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .ttt-cell.o{color:#3b82f6}
 .ttt-status{text-align:center;font-weight:600;margin:10px 0}
 .game-row{display:flex;align-items:center;gap:10px;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:8px;cursor:pointer}
+.camera-view{position:fixed;inset:0;background:#000;z-index:80}
+.cam-filter-row{display:flex;gap:8px;overflow-x:auto;margin-bottom:10px;padding:0 4px}
+.cam-filter-row button{flex-shrink:0;background:rgba(255,255,255,.15);color:#fff;border-radius:10px;padding:6px 10px;font-size:12px;width:56px;height:56px;object-fit:cover;background-size:cover;background-position:center}
+.cam-controls{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,.7));padding:14px}
+.cam-shutter-row{display:flex;justify-content:center;gap:24px;align-items:center}
+.cam-shutter{width:64px;height:64px;border-radius:50%;background:#fff;border:4px solid rgba(255,255,255,.5)}
+.cam-record{width:64px;height:64px;border-radius:50%;background:#ff3b30;color:#fff;font-size:22px}
+.cam-record.recording{border-radius:14px}
 .back-top{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);border-radius:999px;padding:9px 18px;font-weight:600;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.3);z-index:30;display:flex;align-items:center;gap:6px}
 .reel-wrap{position:relative}
 .reel-overlay{position:absolute;right:8px;bottom:10px;display:flex;flex-direction:column;align-items:center;gap:16px}
@@ -211,6 +219,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
       <div class="hide media-dropdown" id="mediaMenu">
         <button type="button" onclick="pickMedia('image')">📷 Photo</button>
         <button type="button" onclick="pickMedia('video')">🎥 Video</button>
+        <button type="button" onclick="toggleMediaMenu();openCamera('post')">📸 Camera</button>
       </div>
     </div>
     <input id="postFile" type="file" class="hide">
@@ -235,6 +244,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 <div id="settingsView" class="profile-view hide"></div>
 <div id="gameHubView" class="profile-view hide"></div>
 <div id="gameView" class="profile-view hide"></div>
+<div id="cameraView" class="camera-view hide"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.js"></script>
 <script>
@@ -1198,7 +1208,8 @@ async function loadStories() {
 }
 
 function renderStoriesRow() {
-  const addHtml = '<div class="story-item"><div class="story-add" onclick="document.getElementById(\'storyFile\').click()">+</div><div class="story-name">Your story</div></div>';
+  const addHtml = '<div class="story-item"><div class="story-add" onclick="document.getElementById(\'storyFile\').click()">+</div><div class="story-name">Upload</div></div>' +
+    '<div class="story-item"><div class="story-add" onclick="openCamera(\'story\')">\uD83D\uDCF8</div><div class="story-name">Camera</div></div>';
   const others = storyGroups.map(g => {
     const av = (g.user && g.user.avatar_url) || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(g.user ? g.user.username : "U");
     return '<div class="story-item" onclick="openStory(\'' + g.user.id + '\')"><div class="story-ring"><img src="' + esc(av) + '"></div><div class="story-name">' + esc(g.user.username) + '</div></div>';
@@ -1295,6 +1306,132 @@ function scrollToTopAndRefresh() {
   window.scrollTo({ top: 0, behavior: "smooth" });
   loadFeed();
   $("backTop").classList.add("hide");
+}
+
+const CAM_FILTERS = [
+  { name: "Normal", css: "none" },
+  { name: "B&W", css: "grayscale(1)" },
+  { name: "Sepia", css: "sepia(.8)" },
+  { name: "Vivid", css: "saturate(1.8) contrast(1.1)" },
+  { name: "Cool", css: "hue-rotate(180deg) saturate(1.2)" },
+  { name: "Warm", css: "sepia(.3) saturate(1.4) hue-rotate(-10deg)" }
+];
+
+let camStream = null, camDest = "post", camFilter = "none";
+let camRecorder = null, camChunks = [], camDrawLoop = null, camTimer = null, camSeconds = 0;
+
+async function openCamera(dest) {
+  camDest = dest;
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
+  } catch (e) {
+    alert("Could not access your camera: " + e.message);
+    return;
+  }
+  renderCameraView();
+  $("cameraView").classList.remove("hide");
+}
+
+function renderCameraView() {
+  const filterBtns = CAM_FILTERS.map(f => '<button onclick="setCamFilter(\'' + f.css + '\')">' + f.name + '</button>').join("");
+  $("cameraView").innerHTML =
+    '<button class="sv-close" onclick="closeCamera()" style="position:absolute;top:14px;right:14px;z-index:5;background:rgba(0,0,0,.5);color:#fff;border-radius:50%;width:36px;height:36px">\u2715</button>' +
+    '<video id="camPreview" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover"></video>' +
+    '<canvas id="camCanvas" class="hide"></canvas>' +
+    '<div class="cam-controls">' +
+    '<div class="cam-filter-row">' + filterBtns + '</div>' +
+    '<div class="cam-shutter-row">' +
+    '<button class="cam-shutter" onclick="capturePhoto()"></button>' +
+    '<button class="cam-record" id="recBtn" onclick="toggleRecording()">\u25CF</button>' +
+    '</div><div id="recTimer" style="text-align:center;color:#fff;margin-top:8px;font-size:13px"></div>' +
+    '</div>';
+  $("camPreview").srcObject = camStream;
+  $("camPreview").style.filter = camFilter;
+}
+
+function setCamFilter(css) {
+  camFilter = css;
+  const el = $("camPreview");
+  if (el) el.style.filter = css;
+}
+
+function closeCamera() {
+  if (camRecorder && camRecorder.state === "recording") camRecorder.stop();
+  if (camStream) camStream.getTracks().forEach(t => t.stop());
+  cancelAnimationFrame(camDrawLoop);
+  clearInterval(camTimer);
+  $("cameraView").classList.add("hide");
+  $("cameraView").innerHTML = "";
+}
+
+function capturePhoto() {
+  const video = $("camPreview"), canvas = $("camCanvas");
+  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  const ctx = canvas.getContext("2d");
+  ctx.filter = camFilter;
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  canvas.toBlob(blob => uploadCameraCapture(blob, "image/jpeg", "photo.jpg", false), "image/jpeg", 0.92);
+}
+
+function startFilteredCanvasStream() {
+  const video = $("camPreview"), canvas = $("camCanvas");
+  canvas.width = video.videoWidth || 640; canvas.height = video.videoHeight || 480;
+  const ctx = canvas.getContext("2d");
+  function draw() {
+    ctx.filter = camFilter;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    camDrawLoop = requestAnimationFrame(draw);
+  }
+  draw();
+  const canvasStream = canvas.captureStream(30);
+  camStream.getAudioTracks().forEach(t => canvasStream.addTrack(t));
+  return canvasStream;
+}
+
+function toggleRecording() {
+  const btn = $("recBtn");
+  if (camRecorder && camRecorder.state === "recording") { camRecorder.stop(); return; }
+  const stream = startFilteredCanvasStream();
+  camChunks = [];
+  camRecorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+  camRecorder.ondataavailable = e => { if (e.data.size > 0) camChunks.push(e.data); };
+  camRecorder.onstop = () => {
+    cancelAnimationFrame(camDrawLoop);
+    clearInterval(camTimer); camSeconds = 0;
+    const t = $("recTimer"); if (t) t.textContent = "";
+    const r = $("recBtn"); if (r) r.classList.remove("recording");
+    const blob = new Blob(camChunks, { type: "video/webm" });
+    uploadCameraCapture(blob, "video/webm", "video.webm", true);
+  };
+  camRecorder.start();
+  if (btn) btn.classList.add("recording");
+  camSeconds = 0;
+  camTimer = setInterval(() => {
+    camSeconds++;
+    const t = $("recTimer"); if (t) t.textContent = camSeconds + "s";
+    if (camSeconds >= 15) camRecorder.stop();
+  }, 1000);
+}
+
+async function uploadCameraCapture(blob, mime, filename, isVideo) {
+  const file = new File([blob], Date.now() + "-" + filename, { type: mime });
+  const dest = camDest;
+  closeCamera();
+  const path = me.id + "/" + Date.now() + "-" + filename;
+  if (dest === "story") {
+    const { error: upErr } = await db.storage.from("stories").upload(path, file);
+    if (upErr) { alert(upErr.message); return; }
+    const url = db.storage.from("stories").getPublicUrl(path).data.publicUrl;
+    await db.from("stories").insert({ user_id: me.id, image_url: url, is_video: isVideo });
+    loadStories();
+  } else {
+    const { error: upErr } = await db.storage.from("posts").upload(path, file);
+    if (upErr) { alert(upErr.message); return; }
+    const url = db.storage.from("posts").getPublicUrl(path).data.publicUrl;
+    const caption = prompt("Add a caption (optional):", "") || "";
+    await db.from("posts").insert({ user_id: me.id, content: caption, image_url: url, is_video: isVideo });
+    loadFeed(); loadStreak(); loadStats();
+  }
 }
 
 db.auth.getSession().then(({ data }) => { if (data.session) start(data.session.user); });
