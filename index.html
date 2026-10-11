@@ -80,6 +80,12 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .blocked-row{display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid var(--line)}
 .blocked-row .avatar{width:34px;height:34px}
 .locked-note{text-align:center;color:var(--soft);padding:30px 16px}
+.ttt-board{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:280px;margin:16px auto}
+.ttt-cell{aspect-ratio:1;background:var(--card);border:1px solid var(--line);border-radius:12px;font-size:42px;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.ttt-cell.x{color:var(--acc)}
+.ttt-cell.o{color:#3b82f6}
+.ttt-status{text-align:center;font-weight:600;margin:10px 0}
+.game-row{display:flex;align-items:center;gap:10px;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:8px;cursor:pointer}
 .back-top{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);border-radius:999px;padding:9px 18px;font-weight:600;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.3);z-index:30;display:flex;align-items:center;gap:6px}
 .reel-wrap{position:relative}
 .reel-overlay{position:absolute;right:8px;bottom:10px;display:flex;flex-direction:column;align-items:center;gap:16px}
@@ -142,6 +148,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
       <button id="notif" class="icon hide" title="Notifications" onclick="openNotifications()">🔔</button>
       <span id="notifBadge" class="hide" style="position:absolute;top:-2px;right:-2px;background:var(--acc);color:#fff;border-radius:50%;font-size:10px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 3px">0</span>
     </span>
+    <button id="gameBtn" class="icon hide" title="Games" onclick="openGameHub()">🎮</button>
     <button id="reelsBtn" class="icon hide" title="Reels" onclick="openReels()">🎬</button>
     <button id="dash" class="icon hide" title="Dashboard" onclick="openDashboard()">📊</button>
     <span style="position:relative;display:inline-block">
@@ -226,6 +233,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 <div id="notifView" class="profile-view hide"></div>
 <div id="reelsView" class="reels-view hide"></div>
 <div id="settingsView" class="profile-view hide"></div>
+<div id="gameHubView" class="profile-view hide"></div>
+<div id="gameView" class="profile-view hide"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.js"></script>
 <script>
@@ -323,6 +332,7 @@ async function start(user) {
   $("msgs").classList.remove("hide");
   $("dash").classList.remove("hide");
   $("reelsBtn").classList.remove("hide");
+  $("gameBtn").classList.remove("hide");
   $("notif").classList.remove("hide");
   loadNotifCount();
   loadUnreadCount();
@@ -659,6 +669,7 @@ async function openProfile(userId) {
     '<div class="pinfo"><div class="pname">' + esc(prof.username) + (prof.private ? " \uD83D\uDD12" : "") + '</div><div class="pbio">' + esc(prof.bio || "No bio yet.") + '</div></div>' +
     (!isMe ? '<button class="ghost" onclick="toggleFollow(\'' + userId + '\',' + myFollowing.has(userId) + ');openProfile(\'' + userId + '\')">' + (myFollowing.has(userId) ? "Following" : "Follow") + '</button>' : "") +
     (!isMe ? '<button class="ghost" onclick="openChatThread(\'' + userId + '\',\'' + esc(prof.username) + '\')">Message</button>' : "") +
+    (!isMe ? '<button class="ghost" onclick="challengeToGame(\'' + userId + '\',\'' + esc(prof.username) + '\')">\uD83C\uDFAE Play</button>' : "") +
     (!isMe ? '<button class="ghost danger-btn" onclick="toggleBlock(\'' + userId + '\',' + isBlocked + ');openProfile(\'' + userId + '\')">' + (isBlocked ? "Unblock" : "Block") + '</button>' : "") +
     '</div><div class="stats"><div class="stat"><b>' + (posts ? posts.length : 0) + '</b><span>Posts</span></div><div class="stat"><b>' + (followersCount || 0) + '</b><span>Followers</span></div><div class="stat"><b>' + (followingCount || 0) + '</b><span>Following</span></div></div></div>' +
     postsHtml;
@@ -943,6 +954,150 @@ async function loadWeeklyAnalytics() {
 }
 
 function closeDashboard() { $("dashboardView").classList.add("hide"); }
+
+const WIN_LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+
+function tttWinner(board) {
+  for (const line of WIN_LINES) {
+    const [a, b, c] = line;
+    if (board[a] !== "-" && board[a] === board[b] && board[b] === board[c]) return board[a];
+  }
+  if (!board.includes("-")) return "draw";
+  return null;
+}
+
+async function openGameHub() {
+  const { data } = await db.from("games")
+    .select("id,board,turn,status,player1,player2,p1:profiles!games_player1_fkey(username),p2:profiles!games_player2_fkey(username)")
+    .or("player1.eq." + me.id + ",player2.eq." + me.id)
+    .eq("status", "active").order("updated_at", { ascending: false });
+  const list = data || [];
+  const rowsHtml = list.length ? list.map(g => {
+    const oppName = g.player1 === me.id ? (g.p2 && g.p2.username) : (g.p1 && g.p1.username);
+    const myTurn = g.turn === me.id;
+    return '<div class="game-row" onclick="resumeGame(' + g.id + ')"><span style="flex:1">vs ' + esc(oppName || "Unknown") + '</span><span style="color:var(--soft);font-size:13px">' + (myTurn ? "Your turn" : "Waiting") + '</span></div>';
+  }).join("") : '<div class="msg" style="color:var(--soft)">No active matches yet.</div>';
+  $("gameHubView").innerHTML =
+    '<button class="ghost" onclick="closeGameHub()">\u2190 Back</button>' +
+    '<h1 style="margin:10px 0">Games</h1>' +
+    '<button onclick="startSinglePlayer()" style="width:100%;margin-bottom:14px">\uD83E\uDD16 Play vs Computer</button>' +
+    '<h3 style="color:var(--soft);font-size:14px;margin-bottom:8px">Matches with friends</h3>' + rowsHtml;
+  $("gameHubView").classList.remove("hide");
+}
+
+function closeGameHub() { $("gameHubView").classList.add("hide"); }
+
+async function challengeToGame(otherId, otherName) {
+  const { data, error } = await db.from("games").insert({ player1: me.id, player2: otherId, turn: me.id }).select().single();
+  if (error) { alert(error.message); return; }
+  closeProfileView();
+  openMultiplayerGame(data.id, otherName);
+}
+
+async function resumeGame(gameId) {
+  closeGameHub();
+  const { data } = await db.from("games").select("*,p1:profiles!games_player1_fkey(username),p2:profiles!games_player2_fkey(username)").eq("id", gameId).maybeSingle();
+  if (!data) return;
+  const oppName = data.player1 === me.id ? (data.p2 && data.p2.username) : (data.p1 && data.p1.username);
+  openMultiplayerGame(gameId, oppName);
+}
+
+let gamePollTimer = null;
+let currentGameId = null;
+
+async function openMultiplayerGame(gameId, oppName) {
+  currentGameId = gameId;
+  await renderMultiplayerGame(gameId, oppName);
+  $("gameView").classList.remove("hide");
+  clearInterval(gamePollTimer);
+  gamePollTimer = setInterval(() => renderMultiplayerGame(gameId, oppName, true), 3000);
+}
+
+async function renderMultiplayerGame(gameId, oppName, silent) {
+  const { data: g } = await db.from("games").select("*").eq("id", gameId).maybeSingle();
+  if (!g) return;
+  const board = g.board.split("");
+  const mySymbol = g.player1 === me.id ? "X" : "O";
+  const myTurn = g.turn === me.id && g.status === "active";
+  let statusText = "";
+  if (g.status === "won") statusText = (g.winner === me.id ? "You won! \uD83C\uDF89" : oppName + " won.");
+  else if (g.status === "draw") statusText = "It's a draw.";
+  else statusText = myTurn ? "Your turn (" + mySymbol + ")" : oppName + "'s turn...";
+  const cellsHtml = board.map((c, i) =>
+    '<div class="ttt-cell ' + (c === "X" ? "x" : c === "O" ? "o" : "") + '" onclick="playMultiplayerMove(' + gameId + ',' + i + ',\'' + mySymbol + '\')">' + (c === "-" ? "" : c) + '</div>'
+  ).join("");
+  if (silent) {
+    const statusEl = $("gameStatus"), boardEl = $("gameBoard");
+    if (statusEl) statusEl.textContent = statusText;
+    if (boardEl) boardEl.innerHTML = cellsHtml;
+    if (g.status !== "active") clearInterval(gamePollTimer);
+    return;
+  }
+  $("gameView").innerHTML =
+    '<button class="ghost" onclick="closeGameView()">\u2190 Back</button>' +
+    '<h1 style="margin:10px 0">vs ' + esc(oppName || "Opponent") + '</h1>' +
+    '<div class="ttt-status" id="gameStatus">' + statusText + '</div>' +
+    '<div class="ttt-board" id="gameBoard">' + cellsHtml + '</div>';
+}
+
+async function playMultiplayerMove(gameId, index, mySymbol) {
+  const { data: g } = await db.from("games").select("*").eq("id", gameId).maybeSingle();
+  if (!g || g.status !== "active" || g.turn !== me.id) return;
+  const board = g.board.split("");
+  if (board[index] !== "-") return;
+  board[index] = mySymbol;
+  const newBoard = board.join("");
+  const result = tttWinner(board);
+  const otherId = g.player1 === me.id ? g.player2 : g.player1;
+  const updates = { board: newBoard, turn: otherId, updated_at: new Date().toISOString() };
+  if (result === "draw") { updates.status = "draw"; }
+  else if (result) { updates.status = "won"; updates.winner = me.id; }
+  await db.from("games").update(updates).eq("id", gameId);
+  const oppNameEl = document.querySelector("#gameView h1");
+  const oppName = oppNameEl ? oppNameEl.textContent.replace("vs ", "") : "Opponent";
+  renderMultiplayerGame(gameId, oppName, true);
+}
+
+function closeGameView() {
+  clearInterval(gamePollTimer);
+  currentGameId = null;
+  $("gameView").classList.add("hide");
+}
+
+let spBoard = ["-","-","-","-","-","-","-","-","-"];
+
+function startSinglePlayer() {
+  closeGameHub();
+  spBoard = ["-","-","-","-","-","-","-","-","-"];
+  renderSinglePlayer("Your turn (X)");
+  $("gameView").classList.remove("hide");
+}
+
+function renderSinglePlayer(statusText) {
+  const cellsHtml = spBoard.map((c, i) =>
+    '<div class="ttt-cell ' + (c === "X" ? "x" : c === "O" ? "o" : "") + '" onclick="playSinglePlayerMove(' + i + ')">' + (c === "-" ? "" : c) + '</div>'
+  ).join("");
+  $("gameView").innerHTML =
+    '<button class="ghost" onclick="closeGameView()">\u2190 Back</button>' +
+    '<h1 style="margin:10px 0">vs Computer</h1>' +
+    '<div class="ttt-status" id="gameStatus">' + statusText + '</div>' +
+    '<div class="ttt-board" id="gameBoard">' + cellsHtml + '</div>' +
+    '<button class="ghost" onclick="startSinglePlayer()" style="display:block;margin:10px auto">Restart</button>';
+}
+
+function playSinglePlayerMove(index) {
+  if (spBoard[index] !== "-") return;
+  if (tttWinner(spBoard)) return;
+  spBoard[index] = "X";
+  let result = tttWinner(spBoard);
+  if (result) { renderSinglePlayer(result === "draw" ? "It's a draw." : "You won! \uD83C\uDF89"); return; }
+  const empty = spBoard.map((c, i) => c === "-" ? i : null).filter(i => i !== null);
+  const aiMove = empty[Math.floor(Math.random() * empty.length)];
+  spBoard[aiMove] = "O";
+  result = tttWinner(spBoard);
+  if (result) { renderSinglePlayer(result === "draw" ? "It's a draw." : "Computer won."); return; }
+  renderSinglePlayer("Your turn (X)");
+}
 
 let reelsObserver = null;
 let reelsData = [];
