@@ -94,6 +94,13 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .cam-shutter{width:64px;height:64px;border-radius:50%;background:#fff;border:4px solid rgba(255,255,255,.5)}
 .cam-record{width:64px;height:64px;border-radius:50%;background:#ff3b30;color:#fff;font-size:22px}
 .cam-record.recording{border-radius:14px}
+.dmg-wrap{position:fixed;inset:0;background:linear-gradient(180deg,#1b1b3a,#0d0d1f);z-index:85}
+.dmg-hud{position:absolute;top:14px;left:14px;right:14px;display:flex;justify-content:space-between;color:#fff;font-weight:700;z-index:3}
+.dmg-hud button{background:rgba(255,255,255,.15);color:#fff;border-radius:50%;width:34px;height:34px;padding:0}
+.dmg-over{position:absolute;inset:0;background:rgba(0,0,0,.75);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;gap:10px;z-index:4}
+.dmg-over h2{color:var(--acc);margin:0}
+.dmg-lb{width:80%;max-width:280px;text-align:left}
+.dmg-lb-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.15);font-size:14px}
 .back-top{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);border-radius:999px;padding:9px 18px;font-weight:600;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.3);z-index:30;display:flex;align-items:center;gap:6px}
 .reel-wrap{position:relative}
 .reel-overlay{position:absolute;right:8px;bottom:10px;display:flex;flex-direction:column;align-items:center;gap:16px}
@@ -245,6 +252,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 <div id="gameHubView" class="profile-view hide"></div>
 <div id="gameView" class="profile-view hide"></div>
 <div id="cameraView" class="camera-view hide"></div>
+<div id="dmgView" class="dmg-wrap hide"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.js"></script>
 <script>
@@ -990,7 +998,7 @@ async function openGameHub() {
   $("gameHubView").innerHTML =
     '<button class="ghost" onclick="closeGameHub()">\u2190 Back</button>' +
     '<h1 style="margin:10px 0">Games</h1>' +
-    '<button onclick="startSinglePlayer()" style="width:100%;margin-bottom:14px">\uD83E\uDD16 Play vs Computer</button>' +
+    '<button onclick="startDailyMobGame()" style="width:100%;margin-bottom:14px">\uD83D\uDD25 Daily Mob Game</button>' +
     '<h3 style="color:var(--soft);font-size:14px;margin-bottom:8px">Matches with friends</h3>' + rowsHtml;
   $("gameHubView").classList.remove("hide");
 }
@@ -1074,39 +1082,135 @@ function closeGameView() {
   $("gameView").classList.add("hide");
 }
 
-let spBoard = ["-","-","-","-","-","-","-","-","-"];
+let dmgAudioCtx = null, dmgMusicTimer = null, dmgMuted = false;
 
-function startSinglePlayer() {
+function dmgTone(freq, dur, type, vol) {
+  if (dmgMuted || !dmgAudioCtx) return;
+  const osc = dmgAudioCtx.createOscillator();
+  const gain = dmgAudioCtx.createGain();
+  osc.type = type || "sine";
+  osc.frequency.value = freq;
+  gain.gain.value = vol || 0.15;
+  osc.connect(gain); gain.connect(dmgAudioCtx.destination);
+  osc.start();
+  gain.gain.exponentialRampToValueAtTime(0.001, dmgAudioCtx.currentTime + dur);
+  osc.stop(dmgAudioCtx.currentTime + dur);
+}
+
+function dmgStartMusic() {
+  const notes = [392, 440, 523.25, 440, 392, 349.23, 392, 440];
+  let i = 0;
+  clearInterval(dmgMusicTimer);
+  dmgMusicTimer = setInterval(() => {
+    dmgTone(notes[i % notes.length], 0.25, "triangle", 0.06);
+    i++;
+  }, 280);
+}
+
+function dmgStopMusic() { clearInterval(dmgMusicTimer); }
+
+function dmgToggleMute() {
+  dmgMuted = !dmgMuted;
+  const b = $("dmgMuteBtn");
+  if (b) b.textContent = dmgMuted ? "\uD83D\uDD07" : "\uD83D\uDD0A";
+}
+
+let dmgState = null;
+
+function startDailyMobGame() {
   closeGameHub();
-  spBoard = ["-","-","-","-","-","-","-","-","-"];
-  renderSinglePlayer("Your turn (X)");
-  $("gameView").classList.remove("hide");
+  if (!dmgAudioCtx) dmgAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  $("dmgView").innerHTML =
+    '<div class="dmg-hud"><span id="dmgScore">Score: 0</span><span id="dmgLives">\u2764\uFE0F\u2764\uFE0F\u2764\uFE0F</span><button id="dmgMuteBtn" onclick="dmgToggleMute()">\uD83D\uDD0A</button></div>' +
+    '<canvas id="dmgCanvas" style="width:100%;height:100%;display:block;touch-action:none"></canvas>' +
+    '<button class="ghost" onclick="stopDailyMobGame()" style="position:absolute;top:56px;right:14px;z-index:3;background:rgba(255,255,255,.15);color:#fff">\u2715 Exit</button>';
+  $("dmgView").classList.remove("hide");
+  const canvas = $("dmgCanvas");
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = canvas.clientWidth * dpr;
+  canvas.height = canvas.clientHeight * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  dmgState = {
+    ctx, W, H, playerX: W / 2, lives: 3, score: 0, items: [], spawnTimer: 0, speed: 2.2, running: true, raf: null
+  };
+  canvas.addEventListener("touchmove", e => {
+    const x = e.touches[0].clientX - canvas.getBoundingClientRect().left;
+    dmgState.playerX = Math.max(22, Math.min(W - 22, x));
+    e.preventDefault();
+  }, { passive: false });
+  canvas.addEventListener("mousemove", e => {
+    const x = e.clientX - canvas.getBoundingClientRect().left;
+    dmgState.playerX = Math.max(22, Math.min(W - 22, x));
+  });
+  dmgStartMusic();
+  dmgLoop();
 }
 
-function renderSinglePlayer(statusText) {
-  const cellsHtml = spBoard.map((c, i) =>
-    '<div class="ttt-cell ' + (c === "X" ? "x" : c === "O" ? "o" : "") + '" onclick="playSinglePlayerMove(' + i + ')">' + (c === "-" ? "" : c) + '</div>'
-  ).join("");
-  $("gameView").innerHTML =
-    '<button class="ghost" onclick="closeGameView()">\u2190 Back</button>' +
-    '<h1 style="margin:10px 0">vs Computer</h1>' +
-    '<div class="ttt-status" id="gameStatus">' + statusText + '</div>' +
-    '<div class="ttt-board" id="gameBoard">' + cellsHtml + '</div>' +
-    '<button class="ghost" onclick="startSinglePlayer()" style="display:block;margin:10px auto">Restart</button>';
+function dmgLoop() {
+  const s = dmgState;
+  if (!s || !s.running) return;
+  const { ctx, W, H } = s;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = "#14142a";
+  ctx.fillRect(0, 0, W, H);
+
+  s.spawnTimer++;
+  const spawnRate = Math.max(18, 48 - Math.floor(s.score / 5));
+  if (s.spawnTimer >= spawnRate) {
+    s.spawnTimer = 0;
+    const isBomb = Math.random() < 0.35;
+    s.items.push({ x: 20 + Math.random() * (W - 40), y: -20, type: isBomb ? "bomb" : "heart" });
+  }
+  s.speed = 2.2 + s.score * 0.03;
+
+  ctx.font = "26px sans-serif";
+  s.items.forEach(it => {
+    it.y += s.speed;
+    ctx.fillText(it.type === "bomb" ? "\uD83D\uDCA3" : "\u2764\uFE0F", it.x - 13, it.y);
+  });
+
+  s.items = s.items.filter(it => {
+    if (it.y > H - 50 && it.y < H - 10 && Math.abs(it.x - s.playerX) < 28) {
+      if (it.type === "heart") { s.score += 1; dmgTone(880, 0.12, "square", 0.12); }
+      else { s.lives -= 1; dmgTone(120, 0.3, "sawtooth", 0.2); if (s.lives <= 0) dmgGameOver(); }
+      return false;
+    }
+    return it.y < H + 30;
+  });
+
+  ctx.font = "34px sans-serif";
+  ctx.fillText("\uD83D\uDD25", s.playerX - 17, H - 22);
+
+  const scoreEl = $("dmgScore"), livesEl = $("dmgLives");
+  if (scoreEl) scoreEl.textContent = "Score: " + s.score;
+  if (livesEl) livesEl.textContent = "\u2764\uFE0F".repeat(Math.max(0, s.lives));
+
+  if (s.running) s.raf = requestAnimationFrame(dmgLoop);
 }
 
-function playSinglePlayerMove(index) {
-  if (spBoard[index] !== "-") return;
-  if (tttWinner(spBoard)) return;
-  spBoard[index] = "X";
-  let result = tttWinner(spBoard);
-  if (result) { renderSinglePlayer(result === "draw" ? "It's a draw." : "You won! \uD83C\uDF89"); return; }
-  const empty = spBoard.map((c, i) => c === "-" ? i : null).filter(i => i !== null);
-  const aiMove = empty[Math.floor(Math.random() * empty.length)];
-  spBoard[aiMove] = "O";
-  result = tttWinner(spBoard);
-  if (result) { renderSinglePlayer(result === "draw" ? "It's a draw." : "Computer won."); return; }
-  renderSinglePlayer("Your turn (X)");
+async function dmgGameOver() {
+  const s = dmgState;
+  s.running = false;
+  cancelAnimationFrame(s.raf);
+  dmgStopMusic();
+  dmgTone(300, 0.5, "sawtooth", 0.2);
+  await db.from("scores").insert({ user_id: me.id, score: s.score });
+  const { data: top } = await db.from("scores").select("score,profiles!scores_user_id_fkey(username)").order("score", { ascending: false }).limit(5);
+  const lbHtml = (top || []).map(r => '<div class="dmg-lb-row"><span>' + esc(r.profiles && r.profiles.username || "?") + '</span><span>' + r.score + '</span></div>').join("");
+  $("dmgView").innerHTML +=
+    '<div class="dmg-over"><h2>Game Over</h2><div>Score: ' + s.score + '</div>' +
+    '<div class="dmg-lb"><b>Top scores</b>' + lbHtml + '</div>' +
+    '<button onclick="startDailyMobGame()">Play Again</button>' +
+    '<button class="ghost" style="color:#fff;border-color:#fff" onclick="stopDailyMobGame()">Exit</button></div>';
+}
+
+function stopDailyMobGame() {
+  if (dmgState) { dmgState.running = false; cancelAnimationFrame(dmgState.raf); }
+  dmgStopMusic();
+  $("dmgView").classList.add("hide");
+  $("dmgView").innerHTML = "";
 }
 
 let reelsObserver = null;
