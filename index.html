@@ -101,6 +101,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .dmg-over h2{color:var(--acc);margin:0}
 .dmg-lb{width:80%;max-width:280px;text-align:left}
 .dmg-lb-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.15);font-size:14px}
+.dmg-bounce{animation:dmgBounce .6s ease infinite alternate}
+.dmg-shake{animation:dmgShake .4s ease infinite}
+@keyframes dmgBounce{from{transform:translateY(0)}to{transform:translateY(-14px)}}
+@keyframes dmgShake{0%{transform:rotate(-8deg)}50%{transform:rotate(8deg)}100%{transform:rotate(-8deg)}}
 .back-top{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);border-radius:999px;padding:9px 18px;font-weight:600;font-size:13px;box-shadow:0 4px 14px rgba(0,0,0,.3);z-index:30;display:flex;align-items:center;gap:6px}
 .reel-wrap{position:relative}
 .reel-overlay{position:absolute;right:8px;bottom:10px;display:flex;flex-direction:column;align-items:center;gap:16px}
@@ -360,6 +364,9 @@ async function start(user) {
   notifPollTimer = setInterval(loadNotifCount, 15000);
   await loadFollowing();
   await loadBlocked();
+  dmgHeartbeat();
+  clearInterval(dmgHeartbeatTimer);
+  dmgHeartbeatTimer = setInterval(dmgHeartbeat, 30000);
   loadStats();
   loadStreak();
   loadFeed();
@@ -687,7 +694,6 @@ async function openProfile(userId) {
     '<div class="pinfo"><div class="pname">' + esc(prof.username) + (prof.private ? " \uD83D\uDD12" : "") + '</div><div class="pbio">' + esc(prof.bio || "No bio yet.") + '</div></div>' +
     (!isMe ? '<button class="ghost" onclick="toggleFollow(\'' + userId + '\',' + myFollowing.has(userId) + ');openProfile(\'' + userId + '\')">' + (myFollowing.has(userId) ? "Following" : "Follow") + '</button>' : "") +
     (!isMe ? '<button class="ghost" onclick="openChatThread(\'' + userId + '\',\'' + esc(prof.username) + '\')">Message</button>' : "") +
-    (!isMe ? '<button class="ghost" onclick="challengeToGame(\'' + userId + '\',\'' + esc(prof.username) + '\')">\uD83C\uDFAE Play</button>' : "") +
     (!isMe ? '<button class="ghost danger-btn" onclick="toggleBlock(\'' + userId + '\',' + isBlocked + ');openProfile(\'' + userId + '\')">' + (isBlocked ? "Unblock" : "Block") + '</button>' : "") +
     '</div><div class="stats"><div class="stat"><b>' + (posts ? posts.length : 0) + '</b><span>Posts</span></div><div class="stat"><b>' + (followersCount || 0) + '</b><span>Followers</span></div><div class="stat"><b>' + (followingCount || 0) + '</b><span>Following</span></div></div></div>' +
     postsHtml;
@@ -973,138 +979,117 @@ async function loadWeeklyAnalytics() {
 
 function closeDashboard() { $("dashboardView").classList.add("hide"); }
 
-const WIN_LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+let dmgHeartbeatTimer = null;
+let inviteWatchTimer = null;
 
-function tttWinner(board) {
-  for (const line of WIN_LINES) {
-    const [a, b, c] = line;
-    if (board[a] !== "-" && board[a] === board[b] && board[b] === board[c]) return board[a];
-  }
-  if (!board.includes("-")) return "draw";
-  return null;
+async function dmgHeartbeat() {
+  await db.from("profiles").update({ last_active: new Date().toISOString() }).eq("id", me.id);
 }
 
 async function openGameHub() {
-  const { data } = await db.from("games")
-    .select("id,board,turn,status,player1,player2,p1:profiles!games_player1_fkey(username),p2:profiles!games_player2_fkey(username)")
-    .or("player1.eq." + me.id + ",player2.eq." + me.id)
-    .eq("status", "active").order("updated_at", { ascending: false });
-  const list = data || [];
-  const rowsHtml = list.length ? list.map(g => {
-    const oppName = g.player1 === me.id ? (g.p2 && g.p2.username) : (g.p1 && g.p1.username);
-    const myTurn = g.turn === me.id;
-    return '<div class="game-row" onclick="resumeGame(' + g.id + ')"><span style="flex:1">vs ' + esc(oppName || "Unknown") + '</span><span style="color:var(--soft);font-size:13px">' + (myTurn ? "Your turn" : "Waiting") + '</span></div>';
-  }).join("") : '<div class="msg" style="color:var(--soft)">No active matches yet.</div>';
+  const ninetySecAgo = new Date(Date.now() - 90000).toISOString();
+  const [{ data: online }, { data: invites }] = await Promise.all([
+    db.from("profiles").select("id,username,avatar_url").neq("id", me.id).gt("last_active", ninetySecAgo).limit(20),
+    db.from("game_invites").select("id,from_id,status,from:profiles!game_invites_from_id_fkey(username)").eq("to_id", me.id).eq("status", "pending")
+  ]);
+  const onlineHtml = (online && online.length) ? online.map(p => {
+    const av = p.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(p.username);
+    return '<div class="game-row"><img class="avatar" style="width:30px;height:30px" src="' + esc(av) + '"><span style="flex:1">' + esc(p.username) + ' \uD83D\uDFE2</span><button class="ghost" onclick="sendDuelInvite(\'' + p.id + '\',\'' + esc(p.username) + '\')">Challenge</button></div>';
+  }).join("") : '<div class="msg" style="color:var(--soft)">No one else is online right now.</div>';
+  const invitesHtml = (invites && invites.length) ? invites.map(inv =>
+    '<div class="game-row"><span style="flex:1">' + esc(inv.from && inv.from.username) + ' challenged you!</span><button onclick="acceptDuelInvite(' + inv.id + ',\'' + esc(inv.from && inv.from.username) + '\')">Accept</button><button class="ghost" onclick="declineDuelInvite(' + inv.id + ')">Decline</button></div>'
+  ).join("") : "";
   $("gameHubView").innerHTML =
     '<button class="ghost" onclick="closeGameHub()">\u2190 Back</button>' +
     '<h1 style="margin:10px 0">Games</h1>' +
     '<button onclick="startDailyMobGame()" style="width:100%;margin-bottom:14px">\uD83D\uDD25 Daily Mob Game</button>' +
-    '<h3 style="color:var(--soft);font-size:14px;margin-bottom:8px">Matches with friends</h3>' + rowsHtml;
+    (invitesHtml ? '<h3 style="color:var(--soft);font-size:14px;margin-bottom:8px">Challenges for you</h3>' + invitesHtml : "") +
+    '<h3 style="color:var(--soft);font-size:14px;margin:14px 0 8px">\uD83D\uDFE2 Online now</h3>' + onlineHtml;
   $("gameHubView").classList.remove("hide");
+  clearInterval(inviteWatchTimer);
+  inviteWatchTimer = setInterval(() => { if (!$("gameHubView").classList.contains("hide")) openGameHub(); }, 8000);
 }
 
-function closeGameHub() { $("gameHubView").classList.add("hide"); }
+function closeGameHub() {
+  clearInterval(inviteWatchTimer);
+  $("gameHubView").classList.add("hide");
+}
 
-async function challengeToGame(otherId, otherName) {
-  const { data, error } = await db.from("games").insert({ player1: me.id, player2: otherId, turn: me.id }).select().single();
+async function sendDuelInvite(otherId, otherName) {
+  const { data, error } = await db.from("game_invites").insert({ from_id: me.id, to_id: otherId }).select().single();
   if (error) { alert(error.message); return; }
-  closeProfileView();
-  openMultiplayerGame(data.id, otherName);
-}
-
-async function resumeGame(gameId) {
   closeGameHub();
-  const { data } = await db.from("games").select("*,p1:profiles!games_player1_fkey(username),p2:profiles!games_player2_fkey(username)").eq("id", gameId).maybeSingle();
-  if (!data) return;
-  const oppName = data.player1 === me.id ? (data.p2 && data.p2.username) : (data.p1 && data.p1.username);
-  openMultiplayerGame(gameId, oppName);
+  $("gameHubView").innerHTML = '<button class="ghost" onclick="closeGameHub()">\u2190 Back</button><div class="locked-note">Waiting for ' + esc(otherName) + ' to accept\u2026</div>';
+  $("gameHubView").classList.remove("hide");
+  const checkTimer = setInterval(async () => {
+    const { data: inv } = await db.from("game_invites").select("status").eq("id", data.id).maybeSingle();
+    if (inv && inv.status === "accepted") { clearInterval(checkTimer); closeGameHub(); startDailyMobGame(data.id, otherName); }
+    else if (inv && inv.status === "declined") { clearInterval(checkTimer); closeGameHub(); alert(otherName + " declined."); }
+  }, 2500);
 }
 
-let gamePollTimer = null;
-let currentGameId = null;
-
-async function openMultiplayerGame(gameId, oppName) {
-  currentGameId = gameId;
-  await renderMultiplayerGame(gameId, oppName);
-  $("gameView").classList.remove("hide");
-  clearInterval(gamePollTimer);
-  gamePollTimer = setInterval(() => renderMultiplayerGame(gameId, oppName, true), 3000);
+async function acceptDuelInvite(inviteId, fromName) {
+  await db.from("game_invites").update({ status: "accepted" }).eq("id", inviteId);
+  closeGameHub();
+  startDailyMobGame(inviteId, fromName);
 }
 
-async function renderMultiplayerGame(gameId, oppName, silent) {
-  const { data: g } = await db.from("games").select("*").eq("id", gameId).maybeSingle();
-  if (!g) return;
-  const board = g.board.split("");
-  const mySymbol = g.player1 === me.id ? "X" : "O";
-  const myTurn = g.turn === me.id && g.status === "active";
-  let statusText = "";
-  if (g.status === "won") statusText = (g.winner === me.id ? "You won! \uD83C\uDF89" : oppName + " won.");
-  else if (g.status === "draw") statusText = "It's a draw.";
-  else statusText = myTurn ? "Your turn (" + mySymbol + ")" : oppName + "'s turn...";
-  const cellsHtml = board.map((c, i) =>
-    '<div class="ttt-cell ' + (c === "X" ? "x" : c === "O" ? "o" : "") + '" onclick="playMultiplayerMove(' + gameId + ',' + i + ',\'' + mySymbol + '\')">' + (c === "-" ? "" : c) + '</div>'
-  ).join("");
-  if (silent) {
-    const statusEl = $("gameStatus"), boardEl = $("gameBoard");
-    if (statusEl) statusEl.textContent = statusText;
-    if (boardEl) boardEl.innerHTML = cellsHtml;
-    if (g.status !== "active") clearInterval(gamePollTimer);
-    return;
-  }
-  $("gameView").innerHTML =
-    '<button class="ghost" onclick="closeGameView()">\u2190 Back</button>' +
-    '<h1 style="margin:10px 0">vs ' + esc(oppName || "Opponent") + '</h1>' +
-    '<div class="ttt-status" id="gameStatus">' + statusText + '</div>' +
-    '<div class="ttt-board" id="gameBoard">' + cellsHtml + '</div>';
-}
-
-async function playMultiplayerMove(gameId, index, mySymbol) {
-  const { data: g } = await db.from("games").select("*").eq("id", gameId).maybeSingle();
-  if (!g || g.status !== "active" || g.turn !== me.id) return;
-  const board = g.board.split("");
-  if (board[index] !== "-") return;
-  board[index] = mySymbol;
-  const newBoard = board.join("");
-  const result = tttWinner(board);
-  const otherId = g.player1 === me.id ? g.player2 : g.player1;
-  const updates = { board: newBoard, turn: otherId, updated_at: new Date().toISOString() };
-  if (result === "draw") { updates.status = "draw"; }
-  else if (result) { updates.status = "won"; updates.winner = me.id; }
-  await db.from("games").update(updates).eq("id", gameId);
-  const oppNameEl = document.querySelector("#gameView h1");
-  const oppName = oppNameEl ? oppNameEl.textContent.replace("vs ", "") : "Opponent";
-  renderMultiplayerGame(gameId, oppName, true);
-}
-
-function closeGameView() {
-  clearInterval(gamePollTimer);
-  currentGameId = null;
-  $("gameView").classList.add("hide");
+async function declineDuelInvite(inviteId) {
+  await db.from("game_invites").update({ status: "declined" }).eq("id", inviteId);
+  openGameHub();
 }
 
 let dmgAudioCtx = null, dmgMusicTimer = null, dmgMuted = false;
 
-function dmgTone(freq, dur, type, vol) {
+function dmgTone(freq, dur, type, vol, when) {
   if (dmgMuted || !dmgAudioCtx) return;
+  const t0 = dmgAudioCtx.currentTime + (when || 0);
+  const osc = dmgAudioCtx.createOscillator();
+  const osc2 = dmgAudioCtx.createOscillator();
+  const gain = dmgAudioCtx.createGain();
+  osc.type = type || "sine"; osc2.type = type || "sine";
+  osc.frequency.value = freq; osc2.frequency.value = freq * 1.004;
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.linearRampToValueAtTime(vol || 0.15, t0 + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  osc.connect(gain); osc2.connect(gain); gain.connect(dmgAudioCtx.destination);
+  osc.start(t0); osc2.start(t0);
+  osc.stop(t0 + dur); osc2.stop(t0 + dur);
+}
+
+function dmgSlide(freqFrom, freqTo, dur, type, vol) {
+  if (dmgMuted || !dmgAudioCtx) return;
+  const t0 = dmgAudioCtx.currentTime;
   const osc = dmgAudioCtx.createOscillator();
   const gain = dmgAudioCtx.createGain();
   osc.type = type || "sine";
-  osc.frequency.value = freq;
-  gain.gain.value = vol || 0.15;
+  osc.frequency.setValueAtTime(freqFrom, t0);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(freqTo, 1), t0 + dur);
+  gain.gain.setValueAtTime(vol || 0.15, t0);
+  gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
   osc.connect(gain); gain.connect(dmgAudioCtx.destination);
-  osc.start();
-  gain.gain.exponentialRampToValueAtTime(0.001, dmgAudioCtx.currentTime + dur);
-  osc.stop(dmgAudioCtx.currentTime + dur);
+  osc.start(t0); osc.stop(t0 + dur);
 }
 
 function dmgStartMusic() {
-  const notes = [392, 440, 523.25, 440, 392, 349.23, 392, 440];
+  const notes = [392, 440, 523.25, 659.25, 523.25, 440, 392, 349.23];
+  const bass = [196, 196, 220, 220, 196, 196, 174.6, 174.6];
   let i = 0;
   clearInterval(dmgMusicTimer);
   dmgMusicTimer = setInterval(() => {
-    dmgTone(notes[i % notes.length], 0.25, "triangle", 0.06);
+    dmgTone(notes[i % notes.length], 0.22, "triangle", 0.05);
+    dmgTone(bass[i % bass.length], 0.3, "sine", 0.04);
     i++;
-  }, 280);
+  }, 260);
+}
+
+function dmgLaughSound() {
+  const haFreqs = [320, 280, 340, 260, 300];
+  haFreqs.forEach((f, i) => dmgTone(f, 0.16, "sawtooth", 0.14, i * 0.15));
+}
+
+function dmgCheerSound() {
+  [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => dmgTone(f, 0.3, "triangle", 0.15, i * 0.12));
 }
 
 function dmgStopMusic() { clearInterval(dmgMusicTimer); }
@@ -1117,11 +1102,13 @@ function dmgToggleMute() {
 
 let dmgState = null;
 
-function startDailyMobGame() {
+function startDailyMobGame(duelInviteId, duelOpponentName) {
   closeGameHub();
   if (!dmgAudioCtx) dmgAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
   $("dmgView").innerHTML =
-    '<div class="dmg-hud"><span id="dmgScore">Score: 0</span><span id="dmgLives">\u2764\uFE0F\u2764\uFE0F\u2764\uFE0F</span><button id="dmgMuteBtn" onclick="dmgToggleMute()">\uD83D\uDD0A</button></div>' +
+    '<div class="dmg-hud"><span id="dmgScore">Score: 0</span><span id="dmgLives">\u2764\uFE0F\u2764\uFE0F\u2764\uFE0F</span>' +
+    (duelInviteId ? '<span id="dmgTimer" style="color:#ffd166">30s</span>' : "") +
+    '<button id="dmgMuteBtn" onclick="dmgToggleMute()">\uD83D\uDD0A</button></div>' +
     '<canvas id="dmgCanvas" style="width:100%;height:100%;display:block;touch-action:none"></canvas>' +
     '<button class="ghost" onclick="stopDailyMobGame()" style="position:absolute;top:56px;right:14px;z-index:3;background:rgba(255,255,255,.15);color:#fff">\u2715 Exit</button>';
   $("dmgView").classList.remove("hide");
@@ -1133,8 +1120,17 @@ function startDailyMobGame() {
   ctx.scale(dpr, dpr);
   const W = canvas.clientWidth, H = canvas.clientHeight;
   dmgState = {
-    ctx, W, H, playerX: W / 2, lives: 3, score: 0, items: [], spawnTimer: 0, speed: 2.2, running: true, raf: null
+    ctx, W, H, playerX: W / 2, playerY: H * 0.22, lives: 3, score: 0, items: [], spawnTimer: 0, speed: 2.2, running: true, raf: null,
+    duelInviteId: duelInviteId || null, duelOpponentName: duelOpponentName || null
   };
+  if (duelInviteId) {
+    let secondsLeft = 30;
+    dmgState.duelTimer = setInterval(() => {
+      secondsLeft--;
+      const t = $("dmgTimer"); if (t) t.textContent = secondsLeft + "s";
+      if (secondsLeft <= 0) { clearInterval(dmgState.duelTimer); if (dmgState.running) dmgGameOver(); }
+    }, 1000);
+  }
   canvas.addEventListener("touchmove", e => {
     const x = e.touches[0].clientX - canvas.getBoundingClientRect().left;
     dmgState.playerX = Math.max(22, Math.min(W - 22, x));
@@ -1157,31 +1153,31 @@ function dmgLoop() {
   ctx.fillRect(0, 0, W, H);
 
   s.spawnTimer++;
-  const spawnRate = Math.max(18, 48 - Math.floor(s.score / 5));
+  const spawnRate = Math.max(16, 46 - Math.floor(s.score / 5));
   if (s.spawnTimer >= spawnRate) {
     s.spawnTimer = 0;
     const isBomb = Math.random() < 0.35;
-    s.items.push({ x: 20 + Math.random() * (W - 40), y: -20, type: isBomb ? "bomb" : "heart" });
+    s.items.push({ x: 20 + Math.random() * (W - 40), y: H + 20, type: isBomb ? "bomb" : "heart" });
   }
-  s.speed = 2.2 + s.score * 0.03;
+  s.speed = 2.4 + s.score * 0.035;
 
   ctx.font = "26px sans-serif";
   s.items.forEach(it => {
-    it.y += s.speed;
+    it.y -= s.speed;
     ctx.fillText(it.type === "bomb" ? "\uD83D\uDCA3" : "\u2764\uFE0F", it.x - 13, it.y);
   });
 
   s.items = s.items.filter(it => {
-    if (it.y > H - 50 && it.y < H - 10 && Math.abs(it.x - s.playerX) < 28) {
-      if (it.type === "heart") { s.score += 1; dmgTone(880, 0.12, "square", 0.12); }
-      else { s.lives -= 1; dmgTone(120, 0.3, "sawtooth", 0.2); if (s.lives <= 0) dmgGameOver(); }
+    if (it.y < s.playerY + 30 && it.y > s.playerY - 10 && Math.abs(it.x - s.playerX) < 28) {
+      if (it.type === "heart") { s.score += 1; dmgTone(880, 0.1, "square", 0.14); }
+      else { s.lives -= 1; dmgSlide(260, 80, 0.3, "sawtooth", 0.2); if (s.lives <= 0) dmgGameOver(); }
       return false;
     }
-    return it.y < H + 30;
+    return it.y > -30;
   });
 
   ctx.font = "34px sans-serif";
-  ctx.fillText("\uD83D\uDD25", s.playerX - 17, H - 22);
+  ctx.fillText("\uD83D\uDD25", s.playerX - 17, s.playerY);
 
   const scoreEl = $("dmgScore"), livesEl = $("dmgLives");
   if (scoreEl) scoreEl.textContent = "Score: " + s.score;
@@ -1194,20 +1190,52 @@ async function dmgGameOver() {
   const s = dmgState;
   s.running = false;
   cancelAnimationFrame(s.raf);
+  clearInterval(s.duelTimer);
   dmgStopMusic();
-  dmgTone(300, 0.5, "sawtooth", 0.2);
+
+  if (s.duelInviteId) {
+    const { data: inv } = await db.from("game_invites").select("*").eq("id", s.duelInviteId).maybeSingle();
+    const isFrom = inv.from_id === me.id;
+    await db.from("game_invites").update(isFrom ? { score_from: s.score } : { score_to: s.score }).eq("id", s.duelInviteId);
+    $("dmgView").innerHTML += '<div class="dmg-over"><div class="locked-note" style="color:#fff">Waiting for ' + esc(s.duelOpponentName) + "\u2026</div></div>";
+    const waitTimer = setInterval(async () => {
+      const { data: fresh } = await db.from("game_invites").select("*").eq("id", s.duelInviteId).maybeSingle();
+      const myScore = isFrom ? fresh.score_from : fresh.score_to;
+      const oppScore = isFrom ? fresh.score_to : fresh.score_from;
+      if (myScore !== null && oppScore !== null) {
+        clearInterval(waitTimer);
+        const isWin = myScore > oppScore;
+        const isDraw = myScore === oppScore;
+        if (isWin) dmgCheerSound(); else if (!isDraw) dmgLaughSound();
+        const faceHtml = isDraw ? '<div style="font-size:60px">\uD83E\uDD1D</div><h2>It\u2019s a draw!</h2>'
+          : isWin ? '<div class="dmg-bounce" style="font-size:60px">\uD83C\uDFC6</div><h2 style="color:#ffd166">Right on, Papa!</h2>'
+          : '<div class="dmg-shake" style="font-size:60px">\uD83E\uDD23</div><h2>Haha, you lost!</h2>';
+        $("dmgView").innerHTML = '<div class="dmg-over">' + faceHtml +
+          '<div>You: ' + myScore + ' \u2014 ' + esc(s.duelOpponentName) + ': ' + oppScore + '</div>' +
+          '<button onclick="startDailyMobGame()">Play Solo</button>' +
+          '<button class="ghost" style="color:#fff;border-color:#fff" onclick="stopDailyMobGame()">Exit</button></div>';
+      }
+    }, 2500);
+    return;
+  }
+
+  const isWin = s.score >= 15;
+  if (isWin) dmgCheerSound(); else dmgLaughSound();
   await db.from("scores").insert({ user_id: me.id, score: s.score });
   const { data: top } = await db.from("scores").select("score,profiles!scores_user_id_fkey(username)").order("score", { ascending: false }).limit(5);
   const lbHtml = (top || []).map(r => '<div class="dmg-lb-row"><span>' + esc(r.profiles && r.profiles.username || "?") + '</span><span>' + r.score + '</span></div>').join("");
+  const faceHtml = isWin
+    ? '<div class="dmg-bounce" style="font-size:60px">\uD83C\uDFC6</div><h2 style="color:#ffd166">Right on, Papa!</h2>'
+    : '<div class="dmg-shake" style="font-size:60px">\uD83E\uDD23</div><h2>Haha, you lost!</h2>';
   $("dmgView").innerHTML +=
-    '<div class="dmg-over"><h2>Game Over</h2><div>Score: ' + s.score + '</div>' +
+    '<div class="dmg-over">' + faceHtml + '<div>Score: ' + s.score + '</div>' +
     '<div class="dmg-lb"><b>Top scores</b>' + lbHtml + '</div>' +
     '<button onclick="startDailyMobGame()">Play Again</button>' +
     '<button class="ghost" style="color:#fff;border-color:#fff" onclick="stopDailyMobGame()">Exit</button></div>';
 }
 
 function stopDailyMobGame() {
-  if (dmgState) { dmgState.running = false; cancelAnimationFrame(dmgState.raf); }
+  if (dmgState) { dmgState.running = false; cancelAnimationFrame(dmgState.raf); clearInterval(dmgState.duelTimer); }
   dmgStopMusic();
   $("dmgView").classList.add("hide");
   $("dmgView").innerHTML = "";
