@@ -167,6 +167,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
       <button id="notif" class="icon hide" title="Notifications" onclick="openNotifications()">🔔</button>
       <span id="notifBadge" class="hide" style="position:absolute;top:-2px;right:-2px;background:var(--acc);color:#fff;border-radius:50%;font-size:10px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 3px">0</span>
     </span>
+    <button id="searchBtn" class="icon hide" title="Search" onclick="openSearch()">🔍</button>
     <button id="gameBtn" class="icon hide" title="Games" onclick="openGameHub()">🎮</button>
     <button id="reelsBtn" class="icon hide" title="Reels" onclick="openReels()">🎬</button>
     <button id="dash" class="icon hide" title="Dashboard" onclick="openDashboard()">📊</button>
@@ -257,6 +258,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 <div id="gameView" class="profile-view hide"></div>
 <div id="cameraView" class="camera-view hide"></div>
 <div id="dmgView" class="dmg-wrap hide"></div>
+<div id="searchView" class="profile-view hide"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.js"></script>
 <script>
@@ -355,6 +357,7 @@ async function start(user) {
   $("dash").classList.remove("hide");
   $("reelsBtn").classList.remove("hide");
   $("gameBtn").classList.remove("hide");
+  $("searchBtn").classList.remove("hide");
   $("notif").classList.remove("hide");
   loadNotifCount();
   loadUnreadCount();
@@ -1239,6 +1242,51 @@ function stopDailyMobGame() {
   dmgStopMusic();
   $("dmgView").classList.add("hide");
   $("dmgView").innerHTML = "";
+}
+
+function openSearch() {
+  $("searchView").innerHTML =
+    '<button class="ghost" onclick="closeSearch()">\u2190 Back</button>' +
+    '<h1 style="margin:10px 0">Search</h1>' +
+    '<input id="searchInput" placeholder="Search people, posts, or #tags" autofocus>' +
+    '<div id="searchResults"></div>';
+  $("searchView").classList.remove("hide");
+  $("searchInput").addEventListener("input", debounceSearch);
+  $("searchInput").focus();
+}
+
+function closeSearch() { $("searchView").classList.add("hide"); }
+
+let searchDebounce = null;
+function debounceSearch() {
+  clearTimeout(searchDebounce);
+  const q = $("searchInput").value.trim();
+  if (!q) { $("searchResults").innerHTML = ""; return; }
+  searchDebounce = setTimeout(() => runSearch(q), 350);
+}
+
+async function runSearch(q) {
+  $("searchResults").innerHTML = '<div class="msg" style="color:var(--soft)">Searching\u2026</div>';
+  const isTag = q.startsWith("#");
+  const term = isTag ? q.slice(1) : q;
+  const [{ data: people }, { data: posts }] = await Promise.all([
+    db.from("profiles").select("id,username,avatar_url,bio").ilike("username", "%" + term + "%").limit(10),
+    isTag
+      ? db.from("posts").select("id,content,created_at,profiles!posts_user_id_fkey(id,username,avatar_url)").ilike("content", "%#" + term + "%").order("created_at", { ascending: false }).limit(15)
+      : db.from("posts").select("id,content,created_at,profiles!posts_user_id_fkey(id,username,avatar_url)").ilike("content", "%" + term + "%").order("created_at", { ascending: false }).limit(15)
+  ]);
+  const peopleHtml = (people && people.length) ? '<h3 style="color:var(--soft);font-size:14px;margin:14px 0 8px">People</h3>' +
+    people.map(p => {
+      const av = p.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(p.username);
+      return '<div class="chat-convo" onclick="closeSearch();openProfile(\'' + p.id + '\')"><img class="avatar" src="' + esc(av) + '"><div><div class="who">' + esc(p.username) + '</div><div class="chat-preview">' + esc(p.bio || "") + '</div></div></div>';
+    }).join("") : "";
+  const postsHtml = (posts && posts.length) ? '<h3 style="color:var(--soft);font-size:14px;margin:14px 0 8px">Posts</h3>' +
+    posts.map(p => {
+      const av = (p.profiles && p.profiles.avatar_url) || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(p.profiles && p.profiles.username || "U");
+      return '<div class="card"><div class="profile" style="margin-bottom:6px"><img class="avatar" style="width:28px;height:28px" src="' + esc(av) + '"><span class="who" onclick="closeSearch();openProfile(\'' + (p.profiles && p.profiles.id) + '\')">' + esc(p.profiles && p.profiles.username) + '</span><span class="time">' + new Date(p.created_at).toLocaleDateString() + '</span></div><div>' + highlightContent(p.content || "") + '</div></div>';
+    }).join("") : "";
+  if (!peopleHtml && !postsHtml) { $("searchResults").innerHTML = '<div class="msg" style="color:var(--soft)">No results for "' + esc(q) + '".</div>'; return; }
+  $("searchResults").innerHTML = peopleHtml + postsHtml;
 }
 
 let reelsObserver = null;
