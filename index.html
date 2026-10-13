@@ -101,6 +101,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .dmg-over h2{color:var(--acc);margin:0}
 .dmg-lb{width:80%;max-width:280px;text-align:left}
 .dmg-lb-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.15);font-size:14px}
+.premium-badge{color:#ffb703}
+.sponsored-pill{display:inline-block;background:#ffb703;color:#1b1b3a;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;margin-bottom:6px}
+.premium-ring{box-shadow:0 0 0 2px #ffb703}
 .dmg-bounce{animation:dmgBounce .6s ease infinite alternate}
 .dmg-shake{animation:dmgShake .4s ease infinite}
 @keyframes dmgBounce{from{transform:translateY(0)}to{transform:translateY(-14px)}}
@@ -489,7 +492,7 @@ function setFeedMode(mode) {
 
 async function loadFeed() {
   const { data, error } = await db.from("posts")
-    .select("id,content,created_at,image_url,is_video,profiles!posts_user_id_fkey(id,username,avatar_url,city,private),likes(user_id,reaction),comments(id,content,profiles!comments_user_id_fkey(id,username,avatar_url))")
+    .select("id,content,created_at,image_url,is_video,promoted,profiles!posts_user_id_fkey(id,username,avatar_url,city,private,premium),likes(user_id,reaction),comments(id,content,profiles!comments_user_id_fkey(id,username,avatar_url))")
     .order("created_at", { ascending: false }).limit(50);
   if (error) { $("feed").innerHTML = '<div class="card msg">' + esc(error.message) + '</div>'; return; }
   lastFeedData = (data || []).filter(p => {
@@ -498,7 +501,7 @@ async function loadFeed() {
     if (myBlocked.has(owner.id)) return false;
     if (owner.private && owner.id !== me.id && !myFollowing.has(owner.id)) return false;
     return true;
-  });
+  }).sort((a, b) => (b.promoted ? 1 : 0) - (a.promoted ? 1 : 0));
   renderFeed();
 }
 
@@ -545,9 +548,12 @@ function renderFeed() {
       (mineType || "\uD83D\uDC4D") + ' ' + total + '</button>' +
       '<div class="react-picker hide" id="picker' + p.id + '">' + pickerBtns + '</div>';
     return '<div class="card">' +
+      (p.promoted ? '<span class="sponsored-pill">Sponsored</span>' : "") +
       '<div class="profile" style="margin-bottom:8px">' +
-      '<img class="avatar" style="width:34px;height:34px;cursor:pointer" src="' + esc(av) + '" onclick="openProfile(\'' + (p.profiles && p.profiles.id) + '\')">' +
+      '<img class="avatar ' + (p.profiles && p.profiles.premium ? "premium-ring" : "") + '" style="width:34px;height:34px;cursor:pointer" src="' + esc(av) + '" onclick="openProfile(\'' + (p.profiles && p.profiles.id) + '\')">' +
       '<span class="who" onclick="openProfile(\'' + (p.profiles && p.profiles.id) + '\')">' + esc(p.profiles && p.profiles.username) + '</span>' +
+      (p.profiles && p.profiles.premium ? '<span class="premium-badge">\u2B50</span>' : "") +
+      (myProfile.is_admin ? '<button class="ghost" style="margin-left:auto" onclick="togglePromote(' + p.id + ',' + !!p.promoted + ')">' + (p.promoted ? "Unpromote" : "Promote") + '</button>' : "") +
       '<span class="time">' + new Date(p.created_at).toLocaleString() + '</span>' +
       (p.profiles && p.profiles.id !== me.id ? '<button class="ghost" style="margin-left:auto" onclick="toggleFollow(\'' + p.profiles.id + '\',' + myFollowing.has(p.profiles.id) + ')">' + (myFollowing.has(p.profiles.id) ? "Following" : "Follow") + '</button>' : '') +
       '</div>' +
@@ -575,6 +581,16 @@ function renderFeed() {
       '<div class="cm-row"><img class="cm-av" src="' + esc(myProfile.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(myProfile.username)) + '"><input id="c' + p.id + '" placeholder="Write a comment"><button class="ghost" onclick="addComment(' + p.id + ')">\u27A4</button></div>' +
       '</div>';
   }).join("");
+}
+
+async function togglePremium(userId, isPremium) {
+  await db.from("profiles").update({ premium: !isPremium }).eq("id", userId);
+  openProfile(userId);
+}
+
+async function togglePromote(id, isPromoted) {
+  await db.from("posts").update({ promoted: !isPromoted }).eq("id", id);
+  loadFeed();
 }
 
 function findPostAnywhere(id) {
@@ -694,8 +710,9 @@ async function openProfile(userId) {
     '<button class="ghost" onclick="closeProfileView()">\u2190 Back</button>' +
     '<div class="card"><div class="profile">' +
     '<img class="avatar" src="' + esc(av) + '">' +
-    '<div class="pinfo"><div class="pname">' + esc(prof.username) + (prof.private ? " \uD83D\uDD12" : "") + '</div><div class="pbio">' + esc(prof.bio || "No bio yet.") + '</div></div>' +
+    '<div class="pinfo"><div class="pname">' + esc(prof.username) + (prof.private ? " \uD83D\uDD12" : "") + (prof.premium ? ' <span class="premium-badge">\u2B50</span>' : "") + '</div><div class="pbio">' + esc(prof.bio || "No bio yet.") + '</div></div>' +
     (!isMe ? '<button class="ghost" onclick="toggleFollow(\'' + userId + '\',' + myFollowing.has(userId) + ');openProfile(\'' + userId + '\')">' + (myFollowing.has(userId) ? "Following" : "Follow") + '</button>' : "") +
+    (myProfile.is_admin && !isMe ? '<button class="ghost" onclick="togglePremium(\'' + userId + '\',' + !!prof.premium + ')">' + (prof.premium ? "Revoke Premium" : "Grant Premium") + '</button>' : "") +
     (!isMe ? '<button class="ghost" onclick="openChatThread(\'' + userId + '\',\'' + esc(prof.username) + '\')">Message</button>' : "") +
     (!isMe ? '<button class="ghost danger-btn" onclick="toggleBlock(\'' + userId + '\',' + isBlocked + ');openProfile(\'' + userId + '\')">' + (isBlocked ? "Unblock" : "Block") + '</button>' : "") +
     '</div><div class="stats"><div class="stat"><b>' + (posts ? posts.length : 0) + '</b><span>Posts</span></div><div class="stat"><b>' + (followersCount || 0) + '</b><span>Followers</span></div><div class="stat"><b>' + (followingCount || 0) + '</b><span>Following</span></div></div></div>' +
