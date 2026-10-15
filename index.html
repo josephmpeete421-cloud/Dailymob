@@ -153,8 +153,13 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 .story-viewer .sv-top{display:flex;align-items:center;gap:8px;padding:12px;color:#fff}
 .story-viewer .sv-close{background:transparent;color:#fff;font-size:20px;margin-left:auto}
 .story-viewers-list{background:#111;color:#fff;padding:10px;font-size:13px;max-height:120px;overflow-y:auto}
-.story-react-row{display:flex;gap:10px;justify-content:center;padding:14px;background:#000}
-.story-react-row button{background:transparent;font-size:26px;padding:4px 8px}
+.sv-progress{display:flex;gap:4px;padding:8px 10px 0}
+.sv-seg{flex:1;height:3px;background:rgba(255,255,255,.3);border-radius:2px;overflow:hidden}
+.sv-seg-fill{height:100%;width:0%;background:#fff}
+.sv-bottom{display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(0,0,0,.4)}
+.sv-bottom input{margin:0;background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.3);color:#fff;border-radius:999px}
+.sv-bottom input::placeholder{color:rgba(255,255,255,.7)}
+.sv-bottom button{background:transparent;font-size:24px;padding:2px 4px}
 .tag{color:var(--acc);font-weight:600;cursor:pointer}
 .mention{color:var(--acc);font-weight:600}
 .post-img{width:100%;border-radius:10px;margin-top:8px;max-height:400px;object-fit:cover}
@@ -225,7 +230,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
   </div>
 
   <div class="stories-row" id="storiesRow"></div>
-  <input id="storyFile" type="file" accept="image/*,video/*" class="hide">
+  <input id="storyFile" type="file" accept="image/*,video/*" multiple class="hide">
   <div class="card">
     <textarea id="txt" rows="3" placeholder="What's happening? Use #tags and @mentions"></textarea>
     <div class="hide" id="mediaMenuBackdrop" onclick="toggleMediaMenu()" style="position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:20"></div>
@@ -262,6 +267,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 <div id="cameraView" class="camera-view hide"></div>
 <div id="dmgView" class="dmg-wrap hide"></div>
 <div id="searchView" class="profile-view hide"></div>
+<div id="guidelinesView" class="profile-view hide"></div>
+<div id="reportsView" class="profile-view hide"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.js"></script>
 <script>
@@ -370,6 +377,7 @@ async function start(user) {
   notifPollTimer = setInterval(loadNotifCount, 15000);
   await loadFollowing();
   await loadBlocked();
+  loadHiddenPosts();
   dmgHeartbeat();
   clearInterval(dmgHeartbeatTimer);
   dmgHeartbeatTimer = setInterval(dmgHeartbeat, 30000);
@@ -500,6 +508,7 @@ async function loadFeed() {
     if (!owner) return true;
     if (myBlocked.has(owner.id)) return false;
     if (owner.private && owner.id !== me.id && !myFollowing.has(owner.id)) return false;
+    if (hiddenPosts.has(p.id)) return false;
     return true;
   }).sort((a, b) => (b.promoted ? 1 : 0) - (a.promoted ? 1 : 0));
   renderFeed();
@@ -570,7 +579,9 @@ function renderFeed() {
       '</div>' +
       (p.profiles && p.profiles.id === me.id ? '<div class="acts"><button class="ghost" onclick="editPost(' + p.id + ')">Edit</button><button class="ghost" onclick="deletePost(' + p.id + ')">Delete</button></div>' : "") +
       (p.is_video ? "" : '<div class="acts reactions">' + reactRow +
-      '<button class="ghost" onclick="sharePost(' + p.id + ')">Share</button></div>') +
+      '<button class="ghost" onclick="sharePost(' + p.id + ')">Share</button>' +
+      (p.profiles && p.profiles.id !== me.id ? '<button class="ghost" onclick="togglePostMenu(' + p.id + ')">\u22EF</button><div class="react-picker hide" id="postmenu' + p.id + '" style="flex-direction:column;bottom:38px;right:0;left:auto"><button onclick="notInterested(' + p.id + ')" style="text-align:left;font-size:14px;padding:8px 14px">\uD83D\uDE45 Not interested</button><button onclick="reportPost(' + p.id + ',\'' + (p.profiles && p.profiles.id) + '\')" style="text-align:left;font-size:14px;padding:8px 14px">\u26A0\uFE0F Report</button></div>' : "") +
+      '</div>') +
       (!p.is_video && p.comments.length ? '<div class="comments-toggle" onclick="toggleComments(' + p.id + ')" id="ctoggle' + p.id + '">View ' + p.comments.length + ' comment' + (p.comments.length > 1 ? "s" : "") + '</div>' : "") +
       '<div class="hide" id="clist' + p.id + '">' +
       p.comments.map(c => {
@@ -581,6 +592,38 @@ function renderFeed() {
       '<div class="cm-row"><img class="cm-av" src="' + esc(myProfile.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=" + encodeURIComponent(myProfile.username)) + '"><input id="c' + p.id + '" placeholder="Write a comment"><button class="ghost" onclick="addComment(' + p.id + ')">\u27A4</button></div>' +
       '</div>';
   }).join("");
+}
+
+let hiddenPosts = new Set();
+
+function loadHiddenPosts() {
+  try { hiddenPosts = new Set(JSON.parse(localStorage.getItem("hiddenPosts-" + me.id) || "[]")); }
+  catch (e) { hiddenPosts = new Set(); }
+}
+
+function saveHiddenPosts() {
+  localStorage.setItem("hiddenPosts-" + me.id, JSON.stringify(Array.from(hiddenPosts)));
+}
+
+function togglePostMenu(id) {
+  const el = $("postmenu" + id);
+  if (!el) return;
+  document.querySelectorAll(".react-picker").forEach(e => { if (e.id !== "postmenu" + id) e.classList.add("hide"); });
+  el.classList.toggle("hide");
+}
+
+function notInterested(id) {
+  hiddenPosts.add(id);
+  saveHiddenPosts();
+  loadFeed();
+}
+
+async function reportPost(id, ownerId) {
+  togglePostMenu(id);
+  const reason = prompt("Why are you reporting this post?");
+  if (!reason) return;
+  await db.from("reports").insert({ reporter_id: me.id, reported_post_id: id, reported_user_id: ownerId, reason });
+  alert("Report submitted. Thank you.");
 }
 
 async function togglePremium(userId, isPremium) {
@@ -908,7 +951,9 @@ async function openSettings() {
       '<button class="ghost" onclick="closeSettings()">\u2190 Back</button>' +
       '<h1 style="margin:10px 0">Settings</h1>' +
       '<div class="settings-section"><h3>Profile</h3><div id="profileFormSlot"></div></div>' +
-      '<div class="settings-section"><h3>Blocked accounts</h3><div id="blockedListBox" class="card">Loading...</div></div>';
+      '<div class="settings-section"><h3>Blocked accounts</h3><div id="blockedListBox" class="card">Loading...</div></div>' +
+      '<div class="settings-section"><h3>About</h3><button class="ghost" style="width:100%" onclick="openGuidelines()">\uD83D\uDCDC Community Guidelines</button>' +
+      (myProfile.is_admin ? '<button class="ghost" style="width:100%;margin-top:8px" onclick="openReportsInbox()">\uD83D\uDEA9 Reports Inbox (Admin)</button>' : "") + '</div>';
     $("profileFormSlot").appendChild($("editBox"));
     $("editBox").style.display = "block";
     $("editBox").classList.remove("hide");
@@ -919,6 +964,48 @@ async function openSettings() {
 }
 
 function closeSettings() { $("settingsView").classList.add("hide"); }
+
+function openGuidelines() {
+  $("guidelinesView").innerHTML =
+    '<button class="ghost" onclick="closeGuidelines()">\u2190 Back</button>' +
+    '<h1 style="margin:10px 0">Community Guidelines</h1>' +
+    '<div class="card">' +
+    '<p><b>1. Respect others.</b> No harassment, hate speech, threats, or bullying of any kind.</p>' +
+    '<p><b>2. Keep it appropriate.</b> No nudity, sexual content, or graphic violence.</p>' +
+    '<p><b>3. Be honest.</b> No scams, impersonation, or spreading false information.</p>' +
+    '<p><b>4. No spam.</b> Don\u2019t flood the app with repetitive posts, links, or ads outside the promoted-post system.</p>' +
+    '<p><b>5. Respect privacy.</b> Don\u2019t share someone else\u2019s private information or images without consent.</p>' +
+    '<p><b>6. Age requirement.</b> You must be at least 16 to use Daily Mob.</p>' +
+    '<p><b>7. Reporting.</b> Use the \u22EF menu on any post to report content that breaks these rules. Our team reviews every report.</p>' +
+    '<p><b>8. Enforcement.</b> Breaking these rules can lead to content removal, a warning, or account suspension, at our discretion.</p>' +
+    '</div>';
+  $("guidelinesView").classList.remove("hide");
+}
+
+function closeGuidelines() { $("guidelinesView").classList.add("hide"); }
+
+async function openReportsInbox() {
+  const { data } = await db.from("reports")
+    .select("id,reason,status,created_at,reported_post_id,reporter:profiles!reports_reporter_id_fkey(username),reported:profiles!reports_reported_user_id_fkey(username)")
+    .eq("status", "open").order("created_at", { ascending: false });
+  const html = (data && data.length) ? data.map(r =>
+    '<div class="card"><div class="time">' + new Date(r.created_at).toLocaleString() + '</div>' +
+    '<div><b>' + esc(r.reporter && r.reporter.username) + '</b> reported <b>' + esc(r.reported && r.reported.username) + '</b></div>' +
+    '<div class="pbio">' + esc(r.reason) + '</div>' +
+    '<div class="acts"><button class="ghost" onclick="resolveReport(' + r.id + ',false)">Dismiss</button>' +
+    (r.reported_post_id ? '<button class="ghost danger-btn" onclick="deletePost(' + r.reported_post_id + ');resolveReport(' + r.id + ',true)">Remove post</button>' : "") +
+    '</div></div>'
+  ).join("") : '<div class="card">No open reports.</div>';
+  $("reportsView").innerHTML = '<button class="ghost" onclick="closeReportsInbox()">\u2190 Back</button><h1 style="margin:10px 0">Reports Inbox</h1>' + html;
+  $("reportsView").classList.remove("hide");
+}
+
+function closeReportsInbox() { $("reportsView").classList.add("hide"); }
+
+async function resolveReport(id, actedOn) {
+  await db.from("reports").update({ status: actedOn ? "resolved" : "dismissed" }).eq("id", id);
+  openReportsInbox();
+}
 
 async function openDashboard() {
   const [{ count: postsCount }, { count: followersCount }, { count: followingCount }, { data: myPosts }, { count: storiesCount }] = await Promise.all([
@@ -1415,13 +1502,20 @@ function renderStoriesRow() {
 }
 
 $("storyFile").onchange = async () => {
-  const file = $("storyFile").files[0];
-  if (!file) return;
-  const path = me.id + "/" + Date.now() + "-" + file.name;
-  const { error: upErr } = await db.storage.from("stories").upload(path, file);
-  if (upErr) { alert(upErr.message); return; }
-  const url = db.storage.from("stories").getPublicUrl(path).data.publicUrl;
-  await db.from("stories").insert({ user_id: me.id, image_url: url, is_video: file.type.startsWith("video") });
+  const files = Array.from($("storyFile").files);
+  if (!files.length) return;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const row = $("storiesRow");
+    if (row) row.insertAdjacentHTML("afterbegin", '<div class="story-item" id="uploadingTag"><div class="story-add" style="border-style:solid;color:var(--acc)">\u23F3</div><div class="story-name">' + (i + 1) + '/' + files.length + '</div></div>');
+    const path = me.id + "/" + Date.now() + "-" + file.name;
+    const { error: upErr } = await db.storage.from("stories").upload(path, file);
+    const tag = document.getElementById("uploadingTag");
+    if (tag) tag.remove();
+    if (upErr) { alert(upErr.message); continue; }
+    const url = db.storage.from("stories").getPublicUrl(path).data.publicUrl;
+    await db.from("stories").insert({ user_id: me.id, image_url: url, is_video: file.type.startsWith("video") });
+  }
   $("storyFile").value = "";
   loadStories();
 };
@@ -1434,24 +1528,47 @@ function openStory(userId) {
   showStoryFrame();
 }
 
+let svAutoTimer = null;
+
 function showStoryFrame() {
   const g = currentStoryGroup;
   const s = g.stories[currentStoryIndex];
   if (!s) { closeStoryViewer(); return; }
+  clearTimeout(svAutoTimer);
   if (g.user.id !== me.id) {
     db.from("story_views").insert({ story_id: s.id, viewer_id: me.id }).then(() => {});
   }
   const overlay = document.createElement("div");
   overlay.className = "story-viewer";
   overlay.id = "storyOverlay";
+  const segs = g.stories.map((_, i) => '<div class="sv-seg"><div class="sv-seg-fill" id="svfill' + i + '"></div></div>').join("");
   overlay.innerHTML =
+    '<div class="sv-progress">' + segs + '</div>' +
     '<div class="sv-top"><b>' + esc(g.user.username) + '</b><span style="opacity:.7;font-size:12px">' + new Date(s.created_at).toLocaleString() + '</span>' +
     (g.user.id === me.id ? '<button class="sv-close" onclick="deleteStory(' + s.id + ')" style="margin-left:auto;font-size:14px">Delete</button>' : "") +
     '<button class="sv-close" onclick="closeStoryViewer()">\u2715</button></div>' +
-    (s.is_video ? '<video src="' + esc(s.image_url) + '" controls autoplay onclick="nextStoryFrame()"></video>' : '<img src="' + esc(s.image_url) + '" onclick="nextStoryFrame()">') +
-    (g.user.id !== me.id ? '<div class="story-react-row">' + ["\uD83D\uDC4D", "\u2764\uFE0F", "\uD83D\uDE02", "\uD83D\uDE2E"].map(e => '<button onclick="reactStory(' + s.id + ',\'' + e + '\')">' + e + '</button>').join("") + '</div>' : "") +
-    (g.user.id === me.id ? '<div class="story-viewers-list" id="storyViewersList">Loading views...</div>' : "");
+    (s.is_video ? '<video id="svMedia" src="' + esc(s.image_url) + '" autoplay playsinline onclick="nextStoryFrame()"></video>' : '<img id="svMedia" src="' + esc(s.image_url) + '" onclick="nextStoryFrame()">') +
+    (g.user.id === me.id ? '<div class="story-viewers-list" id="storyViewersList">Loading views...</div>' :
+      '<div class="sv-bottom"><input id="svReply" placeholder="Reply to ' + esc(g.user.username) + '\u2026" onkeydown="if(event.key===\'Enter\')sendStoryReply(\'' + g.user.id + '\')">' +
+      '<button onclick="reactStory(' + s.id + ',\'\uD83D\uDC4D\')">\uD83D\uDC4D</button><button onclick="reactStory(' + s.id + ',\'\u2764\uFE0F\')">\u2764\uFE0F</button><button onclick="reactStory(' + s.id + ',\'\uD83D\uDE02\')">\uD83D\uDE02</button></div>');
   document.body.appendChild(overlay);
+
+  g.stories.forEach((_, i) => {
+    const f = document.getElementById("svfill" + i);
+    if (f) f.style.width = i < currentStoryIndex ? "100%" : "0%";
+  });
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const f = document.getElementById("svfill" + currentStoryIndex);
+    if (f) { f.style.transition = "width " + (s.is_video ? 15 : 5) + "s linear"; f.style.width = "100%"; }
+  }));
+
+  if (s.is_video) {
+    const vid = document.getElementById("svMedia");
+    if (vid) vid.onended = () => nextStoryFrame();
+  } else {
+    svAutoTimer = setTimeout(() => nextStoryFrame(), 5000);
+  }
+
   if (g.user.id === me.id) {
     db.from("story_views").select("reaction,profiles!story_views_viewer_id_fkey(username)").eq("story_id", s.id).then(({ data }) => {
       const names = (data || []).map(v => (v.profiles && v.profiles.username || "") + (v.reaction ? " " + v.reaction : ""));
@@ -1461,10 +1578,16 @@ function showStoryFrame() {
   }
 }
 
+async function sendStoryReply(userId) {
+  const input = $("svReply");
+  const content = input.value.trim();
+  if (!content) return;
+  input.value = "";
+  await db.from("messages").insert({ sender_id: me.id, receiver_id: userId, content: "\uD83D\uDCF8 " + content });
+}
+
 async function reactStory(storyId, emoji) {
   await db.from("story_views").upsert({ story_id: storyId, viewer_id: me.id, reaction: emoji }, { onConflict: "story_id,viewer_id" });
-  const row = document.querySelector(".story-react-row");
-  if (row) row.innerHTML = '<span style="color:#fff;font-size:20px">' + emoji + ' sent</span>';
 }
 
 async function deleteStory(storyId) {
@@ -1475,12 +1598,14 @@ async function deleteStory(storyId) {
 }
 
 function nextStoryFrame() {
+  clearTimeout(svAutoTimer);
   currentStoryIndex++;
   closeStoryViewer(true);
   if (currentStoryGroup && currentStoryIndex < currentStoryGroup.stories.length) showStoryFrame();
 }
 
 function closeStoryViewer(skipGroupReset) {
+  clearTimeout(svAutoTimer);
   const el = $("storyOverlay");
   if (el) el.remove();
   if (!skipGroupReset) currentStoryGroup = null;
