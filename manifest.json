@@ -1,0 +1,14 @@
+{
+  "name": "Daily Mob",
+  "short_name": "Daily Mob",
+  "description": "Post, connect, and play with Daily Mob.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#1b1b3a",
+  "theme_color": "#ff4d6d",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
