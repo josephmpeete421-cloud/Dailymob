@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#14212b">
+<title>Calabar Life — Open World Prototype</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#8bb9d5;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;touch-action:none}
+#game{position:fixed;inset:0}
+canvas{display:block;width:100%;height:100%}
+#hud{position:fixed;inset:0;pointer-events:none;color:#fff;text-shadow:0 2px 5px #000b}
+.panel{background:linear-gradient(135deg,#101923dd,#172b36c9);border:1px solid #ffffff30;border-radius:12px;box-shadow:0 5px 20px #0003;backdrop-filter:blur(5px)}
+#brand{position:absolute;left:12px;top:12px;padding:9px 12px;font-weight:900;letter-spacing:1px;font-size:16px}
+#brand small{display:block;color:#9fe6c0;font-size:10px;letter-spacing:2px;font-weight:700;margin-top:2px}
+#stats{position:absolute;right:12px;top:12px;padding:9px 12px;text-align:right;min-width:118px;font-size:12px;line-height:1.7}
+#mission{position:absolute;top:100px;left:50%;transform:translateX(-50%);padding:9px 14px;max-width:85vw;text-align:center;font-size:12px;white-space:nowrap}
+#help{position:absolute;left:12px;bottom:15px;padding:8px 10px;font-size:10px;line-height:1.5;max-width:160px;color:#e8f6ff}
+#toast{position:absolute;left:50%;top:48%;transform:translate(-50%,-50%);padding:12px 16px;font-weight:800;opacity:0;transition:opacity .2s;text-align:center}
+#controls{position:fixed;inset:0;pointer-events:none}
+#stick{position:absolute;left:20px;bottom:24px;width:126px;height:126px;border-radius:50%;background:#07131b60;border:2px solid #ffffff66;pointer-events:auto;touch-action:none;box-shadow:inset 0 0 20px #0005}
+#nub{position:absolute;left:37px;top:37px;width:48px;height:48px;border-radius:50%;background:#e8f7ffb8;border:2px solid white;box-shadow:0 3px 10px #0007}
+.action{position:absolute;right:18px;width:66px;height:66px;border-radius:50%;border:2px solid #ffffffbb;background:#183c4fbb;color:white;font-weight:900;font-size:11px;pointer-events:auto;touch-action:manipulation;box-shadow:0 4px 12px #0005}
+#action{bottom:34px}
+#switch{right:93px;bottom:55px;width:55px;height:55px;font-size:10px}
+#jump{right:25px;bottom:119px;width:54px;height:54px}
+#look{position:absolute;right:10px;bottom:200px;width:120px;height:100px;pointer-events:auto;touch-action:none;opacity:.12;border:1px solid white;border-radius:12px}
+#desktop{display:none}
+@media (hover:hover) and (pointer:fine){#stick,#controls .action,#look{display:none}#desktop{display:block;position:absolute;left:12px;bottom:12px;padding:8px 10px;font-size:11px}}
+@media(max-width:500px){#brand{font-size:14px}#stats{font-size:11px}#mission{top:88px;font-size:11px}#help{display:none}}
+</style>
+</head>
+<body>
+<div id="game"></div>
+<div id="hud">
+ <div id="brand" class="panel">CALABAR LIFE<small>OPEN WORLD • PROTOTYPE 02</small></div>
+ <div id="stats" class="panel">CASH <b id="cash">₦2,500</b><br>AREA <b id="area">MUNICIPAL</b><br>STATUS <b id="status">ON FOOT</b></div>
+ <div id="mission" class="panel">MISSION: Reach the green marker to earn ₦1,000</div>
+ <div id="help" class="panel">Explore the city and find the green mission marker.<br>WASD / arrow keys to move • E enter/exit car</div>
+ <div id="toast" class="panel"></div>
+ <div id="desktop">WASD / arrows: move • Mouse drag: look • E: enter/exit car • Space: jump</div>
+</div>
+<div id="controls">
+ <div id="stick"><div id="nub"></div></div>
+ <button id="jump" class="action">JUMP</button>
+ <button id="switch" class="action">CAR</button>
+ <button id="action" class="action">ACTION</button>
+ <div id="look"></div>
+</div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js';
+
+const host=document.getElementById('game');
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x8dc1df);
+scene.fog=new THREE.Fog(0x8dc1df,90,310);
+const camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,700);
+const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.65));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;
+host.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xd9f0ff,0x566044,2.0));
+const sun=new THREE.DirectionalLight(0xffe0ae,2.5);sun.position.set(-55,95,35);sun.castShadow=true;
+sun.shadow.mapSize.set(1024,1024);sun.shadow.camera.left=-100;sun.shadow.camera.right=100;sun.shadow.camera.top=100;sun.shadow.camera.bottom=-100;scene.add(sun);
+const mat=(color,rough=.8,metal=0)=>new THREE.MeshStandardMaterial({color,roughness:rough,metalness:metal});
+const grass=mat(0x56865a),road=mat(0x303a40),roadEdge=mat(0x9c9c8c),sidewalk=mat(0xb7b1a1),white=mat(0xf1e9d6),yellow=mat(0xf4c34e),glass= new THREE.MeshStandardMaterial({color:0x86c9db,roughness:.25,metalness:.25}),darkGlass=new THREE.MeshStandardMaterial({color:0x233d4b,roughness:.2,metalness:.35});
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(650,650),grass);ground.rotation.x=-Math.PI/2;ground.position.y=-.18;ground.receiveShadow=true;scene.add(ground);
+function box(w,h,d,material,x,y,z, parent=scene){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material);m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;parent.add(m);return m}
+function cylinder(rt,rb,h,material,x,y,z,parent=scene,seg=10){const m=new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg),material);m.position.set(x,y,z);m.castShadow=true;parent.add(m);return m}
+// Street grid and sidewalks
+for(let k=-5;k<=5;k++){
+ const p=k*34;
+ const r1=new THREE.Mesh(new THREE.PlaneGeometry(15,360),road);r1.rotation.x=-Math.PI/2;r1.position.set(p,.005,0);scene.add(r1);
+ const r2=new THREE.Mesh(new THREE.PlaneGeometry(360,15),road);r2.rotation.x=-Math.PI/2;r2.position.set(0,.006,p);scene.add(r2);
+ for(const side of [-1,1]){
+  const s1=new THREE.Mesh(new THREE.PlaneGeometry(2.2,360),sidewalk);s1.rotation.x=-Math.PI/2;s1.position.set(p+side*8.7,.02,0);scene.add(s1);
+  const s2=new THREE.Mesh(new THREE.PlaneGeometry(360,2.2),sidewalk);s2.rotation.x=-Math.PI/2;s2.position.set(0,.021,p+side*8.7);scene.add(s2);
+ }
+ for(let n=-5;n<5;n++){
+  const dash1=box(.22,.025,3.2,yellow,p,.035,n*34+17);dash1.castShadow=false;
+  const dash2=box(3.2,.025,.22,yellow,n*34+17,.035,p);dash2.castShadow=false;
+ }
+}
+// Building styles
+const wallMats=[0xd7b78e,0xd8d4c8,0xd5a078,0xc7d2c8,0xe0d0a5,0xb9c9d5,0xd8a6a0,0xaaa7a0].map(c=>mat(c));
+const roofMats=[0x6d4740,0x4c5659,0x7a6251,0x555a60].map(c=>mat(c));
+const windowMats=[0x315365,0x476b7c,0x263e4a].map(c=>mat(c,.3,.15));
+function building(x,z,w,d,h,seed){
+ const g=new THREE.Group();g.position.set(x,0,z);scene.add(g);
+ const wall=wallMats[seed%wallMats.length],roof=roofMats[seed%roofMats.length];
+ box(w,h,d,wall,0,h/2,0,g);
+ box(w+.5,.45,d+.5,roof,0,h+.22,0,g);
+ // front facade bands and windows
+ const rows=Math.max(1,Math.floor((h-2)/2.6)), cols=Math.max(2,Math.floor(w/2.2));
+ for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+  const wx=-w/2+(c+.5)*w/cols, wy=1.25+r*2.45;
+  if(wy<h-.2)box(Math.min(.85,w/cols*.55),1.15,.07,windowMats[(seed+r+c)%windowMats.length],wx,wy,d/2+.045,g);
+ }
+ // entrance
+ box(1.25,2,.09,mat(0x554034),0,1,d/2+.06,g);
+ // roof water tank or parapet
+ if(seed%3===0){cylinder(.65,.65,1,mat(0x526d78),w*.23,h+.8,-d*.1,g,12);cylinder(.67,.67,.12,mat(0x263e49),w*.23,h+1.35,-d*.1,g,12)}
+ if(seed%4===1){box(w*.35,.7,d*.28,wall,w*.2,h+.55,-d*.12,g)}
+ return g;
+}
+let seed=7;
+for(let gx=-5;gx<5;gx++)for(let gz=-5;gz<5;gz++){
+ const cx=gx*34+17,cz=gz*34+17;
+ // Leave an open plaza around the start and a few broad corners
+ if(Math.abs(cx)<18&&Math.abs(cz)<18)continue;
+ const w=9+(seed*7%6),d=9+(seed*11%6),h=7+(seed*13%26);
+ building(cx+(seed%2?1:-1)*4,cz+(seed%3?1:-1)*4,w,d,h,seed++);
+}
+// Market / low shops near spawn
+for(let i=0;i<6;i++){
+ const x=-22+i*8;
+ building(x,22,6.5,7,4+(i%3),seed++);
+ box(6.7,.3,7.2,mat([0x168b62,0xb53d32,0xd4a62d][i%3]),x,4.2+(i%3),22);
+}
+// Palm trees
+function palm(x,z,s=1){
+ const g=new THREE.Group();g.position.set(x,0,z);scene.add(g);
+ cylinder(.22*s,.34*s,4.2*s,mat(0x72513a),0,2.1*s,0,g,8);
+ const leafMat=mat(0x236b3e);
+ for(let i=0;i<7;i++){const a=i*Math.PI*2/7;const leaf=box(.38*s,.12*s,2.6*s,leafMat,Math.sin(a)*.9*s,4.1*s,Math.cos(a)*.9*s,g);leaf.rotation.y=a;leaf.rotation.x=-.32;}
+ cylinder(.16*s,.16*s,.25*s,mat(0x3c8c4c),0,4.1*s,0,g,8);
+}
+for(let x=-150;x<=150;x+=34){palm(x,-12,.9);palm(x,12,.8)}
+for(let z=-150;z<=150;z+=34){palm(-12,z,.85);palm(12,z,.85)}
+// street lamps
+for(let k=-4;k<=4;k++)for(let side of [-1,1]){
+ const x=k*34+side*11,z=side*11;
+ cylinder(.09,.13,4.8,mat(0x3a4245),x,2.4,z,scene,8);
+ box(.85,.12,.25,mat(0x394247),x+.35,4.8,z);
+ box(.55,.12,.2,mat(0xffedb0),x+.55,4.72,z);
+}
+// Sky sun and distant skyline
+const sunDisc=new THREE.Mesh(new THREE.SphereGeometry(5,16,12),new THREE.MeshBasicMaterial({color:0xffd38a}));sunDisc.position.set(-110,95,-190);scene.add(sunDisc);
+for(let i=0;i<35;i++){let h=10+(i*17%40),w=8+(i*7%12);building(-170+(i%7)*55,-190-Math.floor(i/7)*18,w,10,h,seed++);}
+// player
+const player=new THREE.Group();scene.add(player);
+const skin=mat(0x8c573a),shirt=mat(0x227a72),pants=mat(0x273344),shoe=mat(0x202226);
+const torso=box(.8,1.05,.42,shirt,0,1.65,0,player);
+const head=new THREE.Mesh(new THREE.SphereGeometry(.27,12,10),skin);head.position.y=2.36;head.castShadow=true;player.add(head);
+const hair= new THREE.Mesh(new THREE.SphereGeometry(.275,12,8,0,Math.PI*2,0,Math.PI*.55),mat(0x201c1a));hair.position.y=2.43;player.add(hair);
+const armL=box(.23,.85,.25,skin,-.57,1.67,0,player),armR=box(.23,.85,.25,skin,.57,1.67,0,player);
+const legL=box(.28,.78,.3,pants,-.22,.72,0,player),legR=box(.28,.78,.3,pants,.22,.72,0,player);
+box(.31,.15,.42,shoe,-.22,.25,.03,player);box(.31,.15,.42,shoe,.22,.25,.03,player);
+player.position.set(0,0,0);
+// Cars
+const cars=[];
+function makeCar(x,z,color,rot=0){
+ const g=new THREE.Group();g.position.set(x,.12,z);g.rotation.y=rot;scene.add(g);
+ box(2.05,.62,4.1,mat(color,.4,.18),0,.65,0,g);
+ box(1.65,.7,1.9,glass,0,1.28,-.15,g);
+ box(1.75,.15,.65,mat(0x252b30),0,.94,1.45,g);
+ for(const wx of [-1,1])for(const wz of [-1.3,1.3]){
+  const wheel=cylinder(.38,.38,.2,mat(0x17191b),wx,.38,wz,g,12);wheel.rotation.z=Math.PI/2;
+  cylinder(.2,.2,.21,mat(0x899398),wx,.38,wz,g,12).rotation.z=Math.PI/2;
+ }
+ box(.55,.16,.08,mat(0xfff0bc),-.62,.72,2.06,g);box(.55,.16,.08,mat(0xfff0bc),.62,.72,2.06,g);
+ box(.55,.16,.08,mat(0xe83c34),-.62,.72,-2.06,g);box(.55,.16,.08,mat(0xe83c34),.62,.72,-2.06,g);
+ const obj={group:g,speed:0,rot,occupied:false,color};cars.push(obj);return obj;
+}
+makeCar(4,2,0xc94432,.1);makeCar(-45,17,0x236eae,Math.PI/2);makeCar(48,-17,0xd7b844,Math.PI/2);makeCar(17,48,0xeeeeea,0);
+const playerCar=cars[0];
+// mission marker
+const marker=new THREE.Group();marker.position.set(48,0,-51);scene.add(marker);
+const ring=new THREE.Mesh(new THREE.TorusGeometry(2.2,.22,8,32),mat(0x49ff9a,.35,.1));ring.rotation.x=Math.PI/2;ring.position.y=.2;marker.add(ring);
+const beam=new THREE.Mesh(new THREE.CylinderGeometry(.15,1.4,7,16,1,true),new THREE.MeshBasicMaterial({color:0x37ff91,transparent:true,opacity:.23,side:THREE.DoubleSide}));beam.position.y=3.7;marker.add(beam);
+const cone=new THREE.Mesh(new THREE.ConeGeometry(.8,1.5,16),mat(0x57ff9e));cone.position.y=8;marker.add(cone);
+// input
+const keys={};let joy={x:0,y:0},cameraYaw=0,camDist=9,camPitch=.23,isDriving=false,cash=2500,missionDone=false,jumpV=0,onGround=true;
+addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(e.key.toLowerCase()==='e')toggleCar();if(e.code==='Space'&&onGround){jumpV=5;onGround=false}});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+const stick=document.getElementById('stick'),nub=document.getElementById('nub');let stickId=null;
+function setJoy(e){const r=stick.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;let dx=e.clientX-cx,dy=e.clientY-cy,len=Math.hypot(dx,dy),max=43;if(len>max){dx*=max/len;dy*=max/len}joy.x=dx/max;joy.y=dy/max;nub.style.transform=`translate(${dx}px,${dy}px)`}
+stick.addEventListener('pointerdown',e=>{stickId=e.pointerId;stick.setPointerCapture(stickId);setJoy(e)});
+stick.addEventListener('pointermove',e=>{if(e.pointerId===stickId)setJoy(e)});
+function resetJoy(){stickId=null;joy={x:0,y:0};nub.style.transform='translate(0px,0px)'}
+stick.addEventListener('pointerup',resetJoy);stick.addEventListener('pointercancel',resetJoy);
+document.getElementById('switch').addEventListener('click',toggleCar);document.getElementById('action').addEventListener('click',doAction);
+document.getElementById('jump').addEventListener('click',()=>{if(onGround&&!isDriving){jumpV=5;onGround=false}});
+let lookId=null,lastX=0,lastY=0;const look=document.getElementById('look');
+look.addEventListener('pointerdown',e=>{lookId=e.pointerId;lastX=e.clientX;lastY=e.clientY;look.setPointerCapture(lookId)});
+look.addEventListener('pointermove',e=>{if(e.pointerId===lookId){cameraYaw-=(e.clientX-lastX)*.008;camPitch=THREE.MathUtils.clamp(camPitch+(e.clientY-lastY)*.004,-.05,.65);lastX=e.clientX;lastY=e.clientY}});
+look.addEventListener('pointerup',()=>lookId=null);look.addEventListener('pointercancel',()=>lookId=null);
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.style.opacity=1;clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.style.opacity=0,2300)}
+function toggleCar(){
+ if(!isDriving){let nearest=null,dist=4;for(const c of cars){const d=c.group.position.distanceTo(player.position);if(d<dist){dist=d;nearest=c}}
+  if(nearest){if(nearest!==playerCar){playerCar.group.position.copy(nearest.group.position);playerCar.group.rotation.copy(nearest.group.rotation)}isDriving=true;player.visible=false;toast('You entered a vehicle. Use the joystick to drive.')}
+  else toast('Move closer to a car to enter it.');
+ }else{isDriving=false;player.visible=true;player.position.copy(playerCar.group.position);player.position.x+=2.1*Math.cos(playerCar.group.rotation.y);player.position.z-=2.1*Math.sin(playerCar.group.rotation.y);toast('You left the vehicle.')}
+}
+function doAction(){
+ if(player.position.distanceTo(marker.position)<5|| (isDriving&&playerCar.group.position.distanceTo(marker.position)<6)){
+  if(!missionDone){cash+=1000;missionDone=true;document.getElementById('mission').textContent='MISSION COMPLETE: You earned ₦1,000! Explore the city.';toast('MISSION COMPLETE! +₦1,000');}
+  else toast('Mission completed. More missions coming soon!');
+ }else if(!isDriving){toggleCar()}else toggleCar();
+}
+function updateArea(){const p=isDriving?playerCar.group.position:player.position;let a='MUNICIPAL';if(p.x>45)a='CALABAR TOWN';if(p.z>45)a='MARKET DISTRICT';if(p.z< -45)a='WATERFRONT';document.getElementById('area').textContent=a;}
+const clock=new THREE.Clock();let walkTime=0;
+function update(dt){
+ let f=-(joy.y||0),s=joy.x||0;
+ if(keys.w||keys.arrowup)f=1;if(keys.s||keys.arrowdown)f=-1;if(keys.a||keys.arrowleft)s=-1;if(keys.d||keys.arrowright)s=1;
+ const inputLen=Math.hypot(f,s);if(inputLen>1){f/=inputLen;s/=inputLen}
+ if(isDriving){
+  const car=playerCar;car.speed+=(f*18*dt);car.speed*=Math.pow(.985,dt*60);car.speed=THREE.MathUtils.clamp(car.speed,-7,20);
+  car.group.rotation.y-=s*dt*(.8+Math.abs(car.speed)*.07)*Math.sign(car.speed||1);
+  car.group.position.x+=Math.sin(car.group.rotation.y)*car.speed*dt;
+  car.group.position.z+=Math.cos(car.group.rotation.y)*car.speed*dt;
+  // Simple collision boundary
+  car.group.position.x=THREE.MathUtils.clamp(car.group.position.x,-180,180);car.group.position.z=THREE.MathUtils.clamp(car.group.position.z,-180,180);
+ }else{
+  if(inputLen>.05){const ang=Math.atan2(s,f)+cameraYaw;const speed=7;player.position.x+=Math.sin(ang)*speed*dt;player.position.z+=Math.cos(ang)*speed*dt;player.rotation.y=ang;walkTime+=dt*10;legL.rotation.x=Math.sin(walkTime)*.65;legR.rotation.x=-Math.sin(walkTime)*.65;armL.rotation.x=-Math.sin(walkTime)*.5;armR.rotation.x=Math.sin(walkTime)*.5;}
+  else{legL.rotation.x*=.8;legR.rotation.x*=.8;armL.rotation.x*=.8;armR.rotation.x*=.8}
+  jumpV-=12*dt;player.position.y+=jumpV*dt;if(player.position.y<=0){player.position.y=0;jumpV=0;onGround=true}
+  player.position.x=THREE.MathUtils.clamp(player.position.x,-180,180);player.position.z=THREE.MathUtils.clamp(player.position.z,-180,180);
+ }
+ // Non-player traffic cruises along roads
+ for(let i=1;i<cars.length;i++){const c=cars[i];if(!c.userData){c.userData={dir:1};}c.group.position.x+=Math.sin(c.group.rotation.y)*dt*2.2*c.userData.dir;c.group.position.z+=Math.cos(c.group.rotation.y)*dt*2.2*c.userData.dir;if(Math.abs(c.group.position.x)>155||Math.abs(c.group.position.z)>155)c.userData.dir*=-1;}
+ marker.rotation.y+=dt*.5;ring.rotation.z+=dt*.7;
+ const focus=isDriving?playerCar.group.position:player.position;
+ const dist=isDriving?12:8.5;
+ const desired=new THREE.Vector3(focus.x+Math.sin(cameraYaw)*Math.cos(camPitch)*dist,focus.y+3.3+Math.sin(camPitch)*dist,focus.z+Math.cos(cameraYaw)*Math.cos(camPitch)*dist);
+ camera.position.lerp(desired,1-Math.exp(-5*dt));camera.lookAt(focus.x,focus.y+1.3,focus.z);
+ document.getElementById('cash').textContent='₦'+cash.toLocaleString('en-NG');document.getElementById('status').textContent=isDriving?'DRIVING':'ON FOOT';updateArea();
+ if(!missionDone){const d=focus.distanceTo(marker.position);document.getElementById('mission').textContent=d<5?'MISSION: Tap ACTION to collect your reward':'MISSION: Reach the green marker to earn ₦1,000';}
+}
+function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.04);update(dt);renderer.render(scene,camera)}
+animate();
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setPixelRatio(Math.min(devicePixelRatio,1.65));renderer.setSize(innerWidth,innerHeight)});
+</script>
+</body>
+</html>
